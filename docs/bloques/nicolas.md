@@ -95,6 +95,8 @@ Login es excepción al token sincronizador: acepta sólo `application/json`; rec
 
 **Homero:** acordar entradas/resultados de `actualizar()` y `cambiarPassword()`, revocación por usuario y campos públicos antes de editar administración. Homero decide permisos de la ruta; Nicolás concentra hashing y sesión. La transición de hashes y la configuración del rol PostgreSQL son operaciones distintas, cada una con sus autorizaciones persistentes.
 
+Contrato previsto: `actualizar(id, cambios)` recibe cambios parciales permitidos y hashea `password` sólo si se proporciona; `cambiarPassword(id, nuevaPassword)` recibe la nueva contraseña en claro para hashearla. Las escrituras exitosas devuelven usuario público sin contraseña/hash; usuario inexistente devuelve `null`. El servicio aplica la revocación por cambio efectivo de contraseña/rol después de confirmar la escritura; Homero no manipula el Map de sesiones ni duplica esa revocación en sus rutas.
+
 ## 8. Orden recomendado de tareas
 
 1. Consultar línea base de Homero, inspeccionar entorno y cerrar la interfaz con Homero/Matías conforme al contrato documentado.

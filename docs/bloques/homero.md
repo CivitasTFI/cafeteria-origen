@@ -49,9 +49,12 @@ La excepción personal debe registrarse antes de la barrera del resto del router
 
 En PUT `/api/admin/usuarios/:id`, permitir sólo `username`, `nombre`, `rol` y `password` según corresponda, validar ID y valores, rechazar campos no admitidos y roles fuera de `admin`, `barista`, `mozo`, `cliente`. Un cliente no puede cambiarse el rol. Invocar el servicio de Nicolás sin duplicar hashing y devolver sólo datos públicos. Tras cambio efectivo de contraseña o rol, Nicolás revoca las sesiones del usuario afectado; el frontend debe recuperar su contexto si pierde la sesión.
 
+Aplicar la lista de campos de negocio después de que el middleware separe el `_csrf` validado: es metadato de seguridad admitido por los helpers, no un campo editable del usuario. Antes de implementar estas rutas, acordar con Nicolás el contrato de entrada, resultado y revocación detallado en su especificación.
+
 ### Archivos
 
 - Admitir sólo extensiones PNG, JPG/JPEG y WebP, coherentes con la firma y estructura del contenido. No confiar en MIME ni nombre declarados; rechazar SVG y otros formatos.
+- Una extensión o firma inicial no valida toda la imagen: comprobar de forma acotada longitudes, límites y cierre de bloques/segmentos del formato, rechazando truncamientos o estructura incoherente. No implementar un decodificador completo ni agregar herramientas complejas sin justificación. El body actual sólo aporta `nombre` y `contenidoBase64`; derivar el MIME del formato comprobado sin exigir un campo MIME nuevo al cliente.
 - Validar base64 y tamaño antes de escribir; máximo **512 KiB = 524288 bytes decodificados**. El base64 de ese tamaño cabe bajo el límite JSON global de 1 MiB con el cuerpo normal; comprobarlo en ejecución con Matías.
 - Generar nombre criptográficamente aleatorio y extensión de la imagen validada. Resolver el destino y comprobar que permanece dentro de uploads; evitar sobrescrituras. Ninguna ruta relativa del cliente determina el archivo escrito.
 - Conservar una URL servible y `bytes`; responder errores 4xx controlados. El parser global sigue siendo responsabilidad de Matías: no ampliar límites globales innecesariamente.
@@ -59,6 +62,8 @@ En PUT `/api/admin/usuarios/:id`, permitir sólo `username`, `nombre`, `rol` y `
 ### Probar conexión
 
 Conservar POST `/api/admin/probar-conexion`. Usar `execFile` o `spawn` con argumentos separados y shell deshabilitado; ejecutar únicamente el programa fijo de conexión. Allowlist exacta inicial: `127.0.0.1` y `::1`, sin DNS ni destinos externos arbitrarios.
+
+Esas direcciones prueban el propio contenedor `app`, no PostgreSQL. Compose comunica `app` con el servicio `db` por su red interna; si se acuerda comprobar ese enlace, añadir únicamente el literal `db` a la allowlist y permitir su resolución interna, sin aceptar otros nombres. Un ping exitoso no verifica autenticación ni disponibilidad de PostgreSQL en el puerto 5432.
 
 Aplicar timeout inicial de 5 segundos y límite de salida de 64 KiB, finalizar el proceso si excede el límite y devolver una respuesta controlada. Comprobar programa disponible y soporte IPv6 en el contenedor durante la implementación; documentar cualquier ajuste por evidencia. Mantener los campos `comando`, `salida`, `error`; el texto de `comando` es informativo y no se entrega a shell.
 
@@ -71,6 +76,18 @@ En errores conservar `{ error }`: 4xx deliberados con mensaje seguro, 500 genér
 ### PostgreSQL y persistencia
 
 Eliminar trust y configurar autenticación por contraseña; la aplicación utiliza `origen_app`, sin superusuario y con permisos CRUD/secuencias necesarios. Mantener el puerto PostgreSQL sin publicar y conservar esquema/datos. Compose toma secretos de variables de ejecución privadas; `.env.example` contiene sólo valores no sensibles o marcadores, nunca claves reales. Retirar respaldos inseguros de `config.ts` y secretos fijos sin consumidor, coordinando los cambios comunes.
+
+Para implementar ese objetivo, adaptar `.env.example`: hoy contiene una contraseña fija de demostración y no incluye `POSTGRES_PASSWORD`. Reemplazar el valor de contraseña por un marcador y agregar esa variable ya utilizada en Compose. Cada integrante copiará la plantilla a su `.env` local, completará sus propias contraseñas y no publicará ese archivo; `.env` ya está excluido de Git y del contexto Docker.
+
+| Variables confirmadas | Uso mínimo en la configuración corregida |
+|---|---|
+| `POSTGRES_PASSWORD` | Contraseña privada del superusuario para bootstrap/administración de PostgreSQL; no usarla como credencial de la aplicación |
+| `DB_USER`, `DB_PASSWORD` | Rol `origen_app` y su contraseña privada; el bootstrap y la conexión deben coincidir sin dar superusuario a la aplicación |
+| `DB_HOST`, `DB_PORT`, `DB_NAME` | En Compose: `db`, `5432` y `origen`; conservar coherencia con `POSTGRES_DB` y el esquema existente |
+| `NODE_ENV`, `PORT`, `APP_PORT` | Entorno, puerto interno de Node y puerto publicado; conservar HTTP local y Secure sólo donde corresponda |
+| `UPLOADS_DIR` | Directorio de archivos; en Compose, `/app/uploads` |
+
+Compose deberá interpolar/pasar esos valores a los servicios que los necesitan: actualmente las credenciales están fijadas en YAML y sólo `APP_PORT` se interpola desde el entorno. Node lee `process.env`, no el archivo `.env` por sí solo. No entregar la contraseña de superusuario al servicio `app`.
 
 **Cambiar SQL de init o variables de Compose no migra un volumen ya inicializado.** Preparar dos recorridos: bootstrap de instalación nueva y aplicación controlada sobre volumen existente. Ambos deben transferir la contraseña privada al proceso de configuración de forma segura, sin SQL concatenado con secretos ni claves escritas en archivos versionados. El procedimiento debe verificar rol, permisos y autenticación, ser repetible sin pérdida de datos y no ejecutarse por el solo hecho de modificar documentación.
 
