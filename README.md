@@ -231,3 +231,9 @@ El apunte es explícito: **se observa y se defiende, no se automatiza**.
 ## 7. Entregables del alumno
 
 Copiar el link del repositorio en [`Documento de Google Sheet`](https://docs.google.com/spreadsheets/d/1pDqMmQXn5BgECrv8xF_jXD2uE_Iyz9xq38HmnOxnvBU/edit?gid=0#gid=0)
+
+## TP4 — Organización del equipo
+
+La distribución aprobada, los contratos compartidos y la guía para comenzar están en la [planificación del TP4](docs/planificacion-tp4.md).
+
+Especificaciones por bloque: [Homero — administración e infraestructura](docs/bloques/homero.md), [Federico — consultas y validación](docs/bloques/federico.md), [Nicolás — autenticación y sesiones](docs/bloques/nicolas.md) y [Matías — frontend, CSRF y cabeceras](docs/bloques/matias.md).
