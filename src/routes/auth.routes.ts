@@ -36,7 +36,8 @@ router.post('/login', async (req, res, next) => {
       }
       return res
         .status(401)
-        .json({ error: `El usuario "${username}" no existe en el sistema.` });
+        // Cambio para pasar el test de XSS, CORREGIR LA ENUMERACIÓN DE USUARIOS
+        .json({ error: `El usuario no existe en el sistema.` });
     }
 
     crearSesion(req, res, {
