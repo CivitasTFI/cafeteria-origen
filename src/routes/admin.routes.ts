@@ -1,7 +1,7 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 import { randomUUID } from 'node:crypto';
 
 import config from '../config';
@@ -159,33 +159,54 @@ router.delete('/productos/:id', async (req, res, next) => {
   }
 });
 
-/**
- * POST /api/admin/probar-conexion
- *
- * -----------------------------------------------------------------------------
- * FALLA — Inyección de comandos del sistema operativo (OWASP A03:2021)
- * -----------------------------------------------------------------------------
- * La dirección del proveedor se mete dentro de una cadena de shell.
- * Como `exec` launches /bin/sh -c, los operadores del shell (|, ;, &&, $())
- * se interpretan y permiten ejecutar comandos arbitrarios en el contenedor.
- *
- * Corrección: validar el host contra una LISTA BLANCA y ejecutar el proceso
- * con `spawn('ping', ['-c', '3', host], { shell: false })`, sin pasar por el
- * shell.
- * -----------------------------------------------------------------------------
- */
+const HOSTS_PRUEBA_CONEXION = new Set(['127.0.0.1', '::1']);
+const TIEMPO_MAXIMO_CONEXION_MS = 5_000;
+const SALIDA_MAXIMA_CONEXION = 64 * 1024;
+
+/** POST /api/admin/probar-conexion */
 router.post('/probar-conexion', (req, res) => {
   const { host } = req.body || {};
+  if (typeof host !== 'string' || !HOSTS_PRUEBA_CONEXION.has(host)) {
+    return res.status(400).json({ error: 'El destino debe ser 127.0.0.1 o ::1.' });
+  }
 
-  // FALLA: entrada de usuario concatenada en un comando de shell.
-  const comando = `ping -c 3 ${host}`;
+  const argumentos = ['-c', '3', '-w', '4', host];
+  const comando = ['ping', ...argumentos].join(' ');
+  const proceso = spawn('/bin/ping', argumentos, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+  const partesSalida: Buffer[] = [];
+  let bytesSalida = 0;
+  let errorPublico: string | null = null;
 
-  exec(comando, (error, stdout, stderr) => {
-    res.json({
-      comando,
-      salida: stdout,
-      error: stderr || (error ? error.message : null),
-    });
+  function detener(mensaje: string): void {
+    if (errorPublico !== null) return;
+    errorPublico = mensaje;
+    proceso.kill('SIGKILL');
+  }
+
+  const temporizador = setTimeout(() => {
+    detener('La prueba de conexión excedió el límite de 5 segundos.');
+  }, TIEMPO_MAXIMO_CONEXION_MS);
+
+  function contarSalida(fragmento: Buffer, conservar: boolean): void {
+    if (errorPublico !== null) return;
+    bytesSalida += fragmento.length;
+    if (bytesSalida > SALIDA_MAXIMA_CONEXION) {
+      detener('La salida de la prueba de conexión superó 64 KiB.');
+      return;
+    }
+    if (conservar) partesSalida.push(fragmento);
+  }
+
+  proceso.stdout.on('data', (fragmento: Buffer) => contarSalida(fragmento, true));
+  proceso.stderr.on('data', (fragmento: Buffer) => contarSalida(fragmento, false));
+  proceso.once('error', () => {
+    errorPublico ??= 'No se pudo iniciar la prueba de conexión.';
+  });
+
+  proceso.once('close', (codigo) => {
+    clearTimeout(temporizador);
+    if (codigo !== 0) errorPublico ??= 'La prueba no pudo confirmar una respuesta del destino.';
+    res.json({ comando, salida: Buffer.concat(partesSalida).toString('utf8'), error: errorPublico });
   });
 });
 
