@@ -7,9 +7,19 @@ import config from '../config';
 import * as catalogo from '../services/catalogo.service';
 import * as usuarios from '../services/usuarios.service';
 import { requiereSesion, requiereRol } from '../middleware/auth';
-import type { Usuario } from '../tipos';
+import type { Rol, Usuario } from '../tipos';
 
 const router = express.Router();
+const CAMPOS_EDITABLES_USUARIO = new Set(['username', 'nombre', 'rol', 'password']);
+const ROLES_ADMINISTRABLES: ReadonlySet<string> = new Set<Rol>(['admin', 'barista', 'mozo', 'cliente']);
+
+function esRolAdministrable(valor: unknown): valor is Rol {
+  return typeof valor === 'string' && ROLES_ADMINISTRABLES.has(valor);
+}
+
+function esTextoValido(valor: unknown): valor is string {
+  return typeof valor === 'string' && !valor.includes('\0');
+}
 
 router.use(requiereSesion);
 
@@ -45,26 +55,59 @@ router.get('/usuarios', async (req, res, next) => {
   }
 });
 
-/**
- * PUT /api/admin/usuarios/:id
- *
- * FALLA — Asignación masiva: la edición administrativa acepta campos del
- * cuerpo, incluido el `rol`, sin validar sus valores.
- */
+/** PUT /api/admin/usuarios/:id */
 router.put('/usuarios/:id', async (req, res, next) => {
   try {
-    const { username, nombre, rol, password } = req.body || {};
+    const id = Number(req.params.id);
+    // El ID de usuarios es SERIAL en PostgreSQL.
+    if (!/^\d+$/.test(req.params.id) || !Number.isInteger(id) || id < 1 || id > 2_147_483_647) {
+      return res.status(400).json({ error: 'ID de usuario inválido.' });
+    }
+
+    const cuerpo: unknown = req.body;
+    if (typeof cuerpo !== 'object' || cuerpo === null || Array.isArray(cuerpo)) {
+      return res.status(400).json({ error: 'Se espera un objeto con los cambios del usuario.' });
+    }
+
+    const campos = Object.keys(cuerpo);
+    if (campos.length === 0) {
+      return res.status(400).json({ error: 'Faltan campos para actualizar.' });
+    }
+    if (campos.some((campo) => !CAMPOS_EDITABLES_USUARIO.has(campo))) {
+      return res.status(400).json({ error: 'La solicitud contiene campos no permitidos.' });
+    }
+
+    const { username, nombre, rol, password } = cuerpo as Record<string, unknown>;
+    if (username !== undefined && (!esTextoValido(username) || username.trim().length === 0)) {
+      return res.status(400).json({ error: 'Nombre de usuario inválido.' });
+    }
+    if (nombre !== undefined && nombre !== null && !esTextoValido(nombre)) {
+      return res.status(400).json({ error: 'Nombre inválido.' });
+    }
+    if (rol !== undefined && !esRolAdministrable(rol)) {
+      return res.status(400).json({ error: 'Rol inválido.' });
+    }
+    if (password !== undefined && (!esTextoValido(password) || password.length === 0)) {
+      return res.status(400).json({ error: 'Contraseña inválida.' });
+    }
+
     const cambios: Partial<Usuario> = {};
     if (username !== undefined) cambios.username = username;
     if (nombre !== undefined) cambios.nombre = nombre;
     if (rol !== undefined) cambios.rol = rol;
     if (password !== undefined) cambios.password = password;
 
-    const usuario = await usuarios.actualizar(req.params.id, cambios);
+    const usuario = await usuarios.actualizar(id, cambios);
     if (!usuario) {
       return res.status(404).json({ error: 'Usuario no encontrado.' });
     }
-    res.json(usuario);
+    res.json({
+      id: usuario.id,
+      username: usuario.username,
+      nombre: usuario.nombre,
+      rol: usuario.rol,
+      creado_en: usuario.creado_en,
+    });
   } catch (err) {
     next(err);
   }
