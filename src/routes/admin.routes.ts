@@ -11,24 +11,30 @@ import type { Usuario } from '../tipos';
 
 const router = express.Router();
 
-/**
- * Rutas del panel de administración.
- *
- * -----------------------------------------------------------------------------
- * FALLA — Autorización ausente / escalada de privilegios (OWASP A01:2021)
- * -----------------------------------------------------------------------------
- * Se exige estar autenticado, pero NO se comprueba el rol: `requiereRol` está
- * importado y no se usa. Cualquier usuario autenticado (incluso con rol
- * "cliente") entra al panel y puede:
- *   - crear, editar y BORRAR productos,
- *   - cambiar contraseñas,
- *   - dar de alta usuarios y cambiarles el rol (escalada de privilegios),
- *   - ejecutar comandos en el servidor.
- *
- * Corrección: `router.use(requiereRol('admin'))` sobre las rutas sensibles.
- * -----------------------------------------------------------------------------
- */
 router.use(requiereSesion);
+
+/**
+ * POST /api/admin/cambiar-contrasena — cambio personal para toda sesión válida.
+ *
+ * FALLAS: sin token anti-CSRF, sin límite de intentos, y la contraseña nueva
+ * se guarda en texto plano.
+ */
+router.post('/cambiar-contrasena', async (req, res, next) => {
+  try {
+    const { nueva } = req.body || {};
+    if (!nueva) {
+      return res.status(400).json({ error: 'Falta la contraseña nueva.' });
+    }
+    // FALLA: no se valida la longitud ni la complejidad de la contraseña.
+    // (`req.usuario!`: requiereSesion ya garantizó que hay un usuario.)
+    const usuario = await usuarios.cambiarPassword(req.usuario!.id, nueva);
+    res.json({ mensaje: 'Contraseña actualizada.', usuario });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.use(requiereRol('admin'));
 
 /** GET /api/admin/usuarios */
 router.get('/usuarios', async (req, res, next) => {
@@ -42,9 +48,8 @@ router.get('/usuarios', async (req, res, next) => {
 /**
  * PUT /api/admin/usuarios/:id
  *
- * FALLA — Asignación masiva: se actualiza cualquier campo que llegue en el
- * cuerpo, incluido el `rol`. Un usuario con rol "cliente" puede mandarse
- * `{"rol": "admin"}` y convertirse en administrador.
+ * FALLA — Asignación masiva: la edición administrativa acepta campos del
+ * cuerpo, incluido el `rol`, sin validar sus valores.
  */
 router.put('/usuarios/:id', async (req, res, next) => {
   try {
@@ -105,27 +110,6 @@ router.delete('/productos/:id', async (req, res, next) => {
       return res.status(404).json({ error: 'Producto no encontrado.' });
     }
     res.json(producto);
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
- * POST /api/admin/cambiar-contrasena
- *
- * FALLAS: sin token anti-CSRF, sin límite de intentos, y la contraseña nueva
- * se guarda en texto plano.
- */
-router.post('/cambiar-contrasena', async (req, res, next) => {
-  try {
-    const { nueva } = req.body || {};
-    if (!nueva) {
-      return res.status(400).json({ error: 'Falta la contraseña nueva.' });
-    }
-    // FALLA: no se valida la longitud ni la complejidad de la contraseña.
-    // (`req.usuario!`: requiereSesion ya garantizó que hay un usuario.)
-    const usuario = await usuarios.cambiarPassword(req.usuario!.id, nueva);
-    res.json({ mensaje: 'Contraseña actualizada.', usuario });
   } catch (err) {
     next(err);
   }
