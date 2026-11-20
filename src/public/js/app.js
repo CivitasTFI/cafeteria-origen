@@ -105,19 +105,19 @@
     // ---------------------------------------------------------------
     grid.innerHTML = productos.map(function (p) {
       window.__productos[p.id] = p;
-      var tags = '<span class="tag">' + raw(p.tipo) + '</span>';
-      if (p.variedad) tags += '<span class="tag tag-origen">' + raw(p.variedad) + '</span>';
-      if (p.tamano) tags += '<span class="tag">' + raw(p.tamano) + '</span>';
+      var tags = '<span class="tag">' + DOMPurify.sanitize(raw(p.tipo)) + '</span>';
+      if (p.variedad) tags += '<span class="tag tag-origen">' + DOMPurify.sanitize(raw(p.variedad)) + '</span>';
+      if (p.tamano) tags += '<span class="tag">' + DOMPurify.sanitize(raw(p.tamano)) + '</span>';
 
       return '' +
         '<article class="product-card">' +
         '  <div class="product-top">' +
-        '    <h3 class="product-name">' + raw(p.nombre) + '</h3>' +
-        '    <span class="product-price">' + money(p.precio) + '</span>' +
+        '    <h3 class="product-name">' + DOMPurify.sanitize(raw(p.nombre)) + '</h3>' +
+        '    <span class="product-price">' + DOMPurify.sanitize(money(p.precio)) + '</span>' +
         '  </div>' +
         '  <div class="product-tags">' + tags + '</div>' +
-        '  <p class="product-desc">' + raw(p.descripcion) + '</p>' +
-        '  <button class="btn btn-ghost btn-agregar" data-id="' + raw(p.id) + '">Agregar</button>' +
+        '  <p class="product-desc">' + DOMPurify.sanitize(raw(p.descripcion)) + '</p>' +
+        '  <button class="btn btn-ghost btn-agregar" data-id="' + DOMPurify.sanitize(raw(p.id)) + '">Agregar</button>' +
         '</article>';
     }).join('');
   }
@@ -127,14 +127,16 @@
 
     // FALLA (XSS reflejado): se interpola el texto buscado con innerHTML.
     if (filtros && filtros.q) {
-      el.innerHTML = 'Resultados para <strong>' + filtros.q + '</strong> — ' + total + ' producto(s)';
+      // Se sanitiza con DOMPurify
+      el.innerHTML = DOMPurify.sanitize('Resultados para <strong>' + filtros.q + '</strong> — ' + total + ' producto(s)');
     } else {
       el.textContent = total + ' producto(s) en el menú';
     }
   }
 
   function renderErrorProductos(mensaje) {
-    $('#productos-grid').innerHTML = '<p class="empty">No se pudo cargar el menú: ' + (mensaje || 'error desconocido') + '</p>';
+    // También se sanitiza para impedir posibles respuestas maliciosas del servidor
+    $('#productos-grid').innerHTML = DOMPurify.sanitize('<p class="empty">No se pudo cargar el menú: ' + (mensaje || 'error desconocido') + '</p>');
   }
 
   /* --------------------------------------------------------------- carrito */
@@ -179,35 +181,36 @@
 
     if (estado.carrito.length === 0) {
       cont.innerHTML = '<p class="empty">El carrito está vacío.</p>';
-      lista.innerHTML = '';
+      lista.textContent = '';
       $('#resumen-total').textContent = money(0);
       return;
     }
 
+    // Se mantiene el innerHTML pero se escapan los inputs con escaparHtml
     cont.innerHTML = estado.carrito.map(function (item, i) {
       var subtotal = item.precio * item.cantidad;
       total += subtotal;
       return '' +
         '<div class="cart-item">' +
         '  <div>' +
-        '    <div class="cart-item-name">' + raw(item.nombre) + '</div>' +
-        '    <div class="cart-item-meta">' + money(item.precio) + ' c/u</div>' +
+        '    <div class="cart-item-name">' + DOMPurify.sanitize(item.nombre) + '</div>' +
+        '    <div class="cart-item-meta">' + DOMPurify.sanitize(money(item.precio)) + ' c/u</div>' +
         '  </div>' +
         '  <div class="qty-control">' +
         '    <button type="button" data-acc="menos" data-i="' + i + '">&minus;</button>' +
-        '    <span>' + item.cantidad + '</span>' +
+        '    <span>' + DOMPurify.sanitize(item.cantidad) + '</span>' +
         '    <button type="button" data-acc="mas" data-i="' + i + '">+</button>' +
         '  </div>' +
         '  <div>' +
-        '    <div class="cart-item-price">' + money(subtotal) + '</div>' +
+        '    <div class="cart-item-price">' + DOMPurify.sanitize(money(subtotal)) + '</div>' +
         '    <button type="button" class="link-danger" data-acc="quitar" data-i="' + i + '">Quitar</button>' +
         '  </div>' +
         '</div>';
     }).join('');
 
     lista.innerHTML = estado.carrito.map(function (item) {
-      return '<li><span>' + raw(item.nombre) + ' × ' + item.cantidad + '</span><span>' +
-        money(item.precio * item.cantidad) + '</span></li>';
+      return '<li><span>' + DOMPurify.sanitize(raw(item.nombre)) + ' × ' + DOMPurify.sanitize(raw(item.cantidad)) + '</span><span>' +
+        DOMPurify.sanitize(money(item.precio * item.cantidad)) + '</span></li>';
     }).join('');
 
     $('#resumen-total').textContent = money(total);
@@ -229,8 +232,9 @@
     }).then(function (resp) {
       if (!resp.ok) {
         // FALLA (XSS reflejado): el mensaje del servidor se pinta con innerHTML.
+        // Se usa DOMPurify para sanitizar el mensaje
         feedback.className = 'form-feedback is-error';
-        feedback.innerHTML = 'No pudimos enviar el pedido: ' + (resp.data.error || 'error desconocido');
+        feedback.textContent = DOMPurify.sanitize('No pudimos enviar el pedido: ' + (resp.data.error || 'error desconocido'));
         return;
       }
       feedback.className = 'form-feedback is-ok';
@@ -256,7 +260,8 @@
       }
       // FALLA (XSS almacenado): el texto de la reseña viene de la base y se
       // inyecta con innerHTML → se ejecuta en el navegador de cada visitante.
-      cont.innerHTML = resp.data.comentarios.map(function (c) {
+      // Se sanitiza el texto de la reseña
+      cont.innerHTML = DOMPurify.sanitize(resp.data.comentarios.map(function (c) {
         var estrellas = '';
         var i;
         for (i = 0; i < Number(c.calificacion || 0); i++) estrellas += '★';
@@ -268,7 +273,7 @@
           '  </div>' +
           '  <p class="review-text">' + raw(c.texto) + '</p>' +
           '</article>';
-      }).join('');
+      }).join(''));
     });
   }
 
@@ -285,7 +290,8 @@
     }).then(function (resp) {
       if (!resp.ok) {
         feedback.className = 'form-feedback is-error';
-        feedback.innerHTML = 'No se pudo publicar: ' + (resp.data.error || 'error desconocido');
+        // Se mantiene el innerHTML por si el error contiene HTML Pero se sanitiza el mensaje
+        feedback.innerHTML = DOMPurify.sanitize('No se pudo publicar: ' + (resp.data.error || 'error desconocido'));
         return;
       }
       feedback.className = 'form-feedback is-ok';

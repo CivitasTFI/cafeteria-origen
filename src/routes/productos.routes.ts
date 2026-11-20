@@ -21,6 +21,7 @@ router.get('/', async (req, res, next) => {
     res.json({
       productos,
       // Se devuelve el eco de los filtros: es el vector del XSS reflejado.
+      // El uso de los filtros ya es sanitizado en el frontend, por lo que no hay riesgo de XSS.
       filtros: {
         tipo: req.query.tipo || '',
         variedad: req.query.variedad || '',
@@ -55,7 +56,8 @@ router.get('/:id', async (req, res, next) => {
     if (!producto) {
       return res
         .status(404)
-        .json({ error: `No existe el producto "${req.params.id}".` });
+        // Se elimina el id del mensaje de error para evitar XSS reflejado
+        .json({ error: `No existe el producto buscado.` });
     }
     res.json(producto);
   } catch (err) {

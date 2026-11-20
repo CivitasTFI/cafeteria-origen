@@ -424,7 +424,8 @@
     var params = new URLSearchParams(window.location.search);
     var objetivo = params.get('vista');
     if (objetivo) {
-      $('#panel-bienvenida').innerHTML = 'Panel ' + objetivo;
+      // Se sanitiza el objeto
+      $('#panel-bienvenida').innerHTML = DOMPurify.sanitize('Panel ' + objetivo);
     }
 
     $('#form-login').addEventListener('submit', iniciarSesion);
