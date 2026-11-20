@@ -2,9 +2,10 @@
 
 ## 1. Responsable y objetivo
 
-**Responsable:** Matías. **Rama asignada:** `fix/frontend-csrf-cabeceras`, desde `develop`, todavía no creada en esta etapa.
+**Responsable:** Matías. **Ramas asignadas:** `fix/xss-corrections` y `fix/frontend-csrf-cabeceras`, desde `develop`.
 
-Corregir renderizado, protección CSRF y cabeceras sin cambiar el framework ni el comportamiento legítimo. Distribución y estrategia aprobadas; **implementación y pruebas aún no comenzaron**. La [planificación compartida](../planificacion-tp4.md) es la referencia del equipo.
+Corregir renderizado, protección CSRF y cabeceras sin cambiar el framework ni el comportamiento legítimo. Distribución y estrategia aprobadas; **implementación y pruebas aún no comenzaron**. La [planificación compartida](../planificacion-tp4.md) es la referencia del equipo.  
+Se implementa DOMPurify para corregir vulnerabilidades XSS
 
 ## 2. Vulnerabilidades asignadas
 
@@ -36,15 +37,12 @@ Las inserciones de etiquetas `script` mediante `innerHTML` no garantizan por sí
 
 ### Renderizado y validación relacionada
 
-Reemplazar inserciones de datos mediante nodos, `textContent`, `dataset` y propiedades apropiadas. Conservar elementos, clases, selectores y atributos de eventos. Revisar productos, resumen de búsqueda, errores, carrito, reseñas, bienvenida, tablas, KPIs, usuarios y reportes; corregir sólo `vista` no resuelve el conjunto.
-
-Eliminar también asignaciones de HTML constante y auxiliares de lectura de `innerHTML` que ya no sean necesarios: el test y el checker tienen alcances textuales distintos. No añadir una mención artificial a DOMPurify para eludirlos; la solución acordada utiliza APIs nativas y no agrega framework.
-
-La dependencia de reseñas conserva texto como texto y valida en servidor los límites del HTML existente: autor 2–40 caracteres, opinión 3–280 y calificación entera 1–5. Coordinar validadores con Federico, rechazar 4xx sin escritura inválida y conservar POST 201 y GET `{ comentarios }`. La protección de salida sigue siendo obligatoria incluso con datos previamente almacenados o validados.
+Para corregir los innerHTML sin perder funciones del código demandando una refactorización extensa, se usará DOMPurify para insertar contenido HTML de forma segura fuera de atributos y bloques de código, mientras que en caso de solo usar texto se reemplazará innerHTML por textContent.
+Además de evitar la inyección por XSS también se usarán respuestas genenéricas para reemplazar a las respuestas que puedan reflejar el código del atacante y ser usado más adelante en una parte futura de código vulnerable. En caso de que esto pise la tarea de algún otro desarrollador simplemente se avisará en commits, PR o documentación para garantizar su corrección y próximo testeo de seguridad.
 
 ### CSRF anónimo y autenticado
 
-Aplicar íntegramente el [contrato CSRF y sesiones](../planificacion-tp4.md#92-contrato-csrf-y-sesiones), acordado antes de cambios en Nicolás/Matías. Se selecciona **GET `/api/csrf-token` → `{ token }`**, ruta ya prevista por los helpers y aún inexistente en la aplicación.
+Aplicar íntegramente el [contrato CSRF y sesiones](../planificacion-tp4.md#92-contrato-csrf-y-sesiones), acordado antes de cambios en Nicolás/Matías. Se selecciona **GET** `/api/csrf-token` **→** `{ token }`, ruta ya prevista por los helpers y aún inexistente en la aplicación.
 
 - Mantener tokens criptográficos en memoria del servidor. Para sesión válida, asociarlos a su `sid`; para visitantes, contexto aleatorio en cookie `csrf` HttpOnly/SameSite=Lax/Secure por entorno. No convertir ese contexto en autenticación ni exigir login para pedido/reseña.
 - Token estable por contexto, máximo ocho horas y limitado por la sesión; comparación con el valor registrado, rechazo de contexto incorrecto/vencido y limpieza de entradas caducadas. Entrega con `Cache-Control: no-store` y sin CORS cruzado.
