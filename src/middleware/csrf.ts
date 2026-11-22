@@ -101,6 +101,41 @@ function tokensCoinciden(enviado: string, esperado: string): boolean {
 
 const METODOS_SEGUROS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+/** Revoca el token CSRF de una sesión (p. ej. logout o nuevo login). */
+export function revocarCsrfSesion(sid: string): void {
+  if (sid) tokens.delete(`sid:${sid}`);
+}
+
+function origenesPermitidos(): string[] {
+  const puerto = config.port;
+  const lista = [
+    `http://localhost:${puerto}`,
+    `http://127.0.0.1:${puerto}`,
+  ];
+  const extra = process.env.APP_ORIGIN;
+  if (extra && !lista.includes(extra)) lista.push(extra);
+  return lista;
+}
+
+/** Rechaza Fetch Metadata cross-site y Origin ajeno cuando el navegador los envía. */
+function rechazarOrigenCruzado(req: Request, res: Response): boolean {
+  const fetchSiteRaw = req.headers['sec-fetch-site'];
+  const fetchSite = (Array.isArray(fetchSiteRaw) ? fetchSiteRaw[0] : fetchSiteRaw) as string | undefined;
+  if (fetchSite === 'cross-site') {
+    res.status(403).json({ error: 'Solicitud cross-site rechazada.' });
+    return true;
+  }
+
+  const originRaw = req.headers.origin;
+  const origin = (Array.isArray(originRaw) ? originRaw[0] : originRaw) as string | undefined;
+  if (origin && !origenesPermitidos().includes(origin)) {
+    res.status(403).json({ error: 'Origin no permitido.' });
+    return true;
+  }
+
+  return false;
+}
+
 /** GET /api/csrf-token — expone el token del contexto actual. */
 export function entregarCsrfToken(req: Request, res: Response): void {
   const clave = asegurarClave(req, res);
@@ -115,6 +150,8 @@ export function validarCsrf(req: Request, res: Response, next: NextFunction): vo
     next();
     return;
   }
+
+  if (rechazarOrigenCruzado(req, res)) return;
 
   // Excepción de login (JSON directo; sin token sincronizador).
   if (req.method === 'POST' && (req.path === '/auth/login' || req.path.endsWith('/auth/login'))) {
