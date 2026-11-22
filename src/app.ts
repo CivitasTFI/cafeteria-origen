@@ -10,6 +10,8 @@ import reportesRoutes from './routes/reportes.routes';
 import comentariosRoutes from './routes/comentarios.routes';
 import adminRoutes from './routes/admin.routes';
 import debugRoutes from './routes/debug.routes';
+import csrfRouter from './routes/csrf.routes';
+import { validarCsrf } from './middleware/csrf';
 
 const app = express();
 
@@ -31,6 +33,10 @@ app.use('/uploads', express.static(config.uploadsDir));
 
 // Sitio web estático
 app.use(express.static(path.join(__dirname, 'public')));
+
+// CSRF protection
+app.use('/api', csrfRouter);
+app.use('/api', validarCsrf);
 
 // --- API --------------------------------------------------------------------
 app.get('/api/salud', (req, res) => {

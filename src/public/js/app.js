@@ -14,6 +14,18 @@
     carrito: cargarCarrito(),
   };
 
+  var csrfToken = null;
+
+  function obtenerCsrf() {
+    if (csrfToken) return Promise.resolve(csrfToken);
+    return fetch(API + '/csrf-token', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        csrfToken = d.token;
+        return csrfToken;
+      });
+  }
+
   /* ---------------------------------------------------------------- utils */
   function $(sel) { return document.querySelector(sel); }
 
@@ -38,10 +50,16 @@
   }
 
   function postJSON(url, cuerpo) {
-    return api(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cuerpo || {}),
+    return obtenerCsrf().then(function (token) {
+      return api(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': token,
+        },
+        body: JSON.stringify(Object.assign({}, cuerpo || {}, { _csrf: token })),
+      });
     });
   }
 
