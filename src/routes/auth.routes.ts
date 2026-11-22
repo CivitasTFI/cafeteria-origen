@@ -1,6 +1,7 @@
 import express from 'express';
 import * as usuarios from '../services/usuarios.service';
-import { crearSesion, destruirSesion, obtenerSesion } from '../middleware/sesion';
+import { revocarCsrfSesion } from '../middleware/csrf';
+import { crearSesion, destruirSesion, leerCookies, obtenerSesion } from '../middleware/sesion';
 
 const router = express.Router();
 
@@ -40,6 +41,9 @@ router.post('/login', async (req, res, next) => {
         .json({ error: `El usuario no existe en el sistema.` });
     }
 
+    const sidAnterior = leerCookies(req).sid;
+    if (sidAnterior) revocarCsrfSesion(sidAnterior);
+
     crearSesion(req, res, {
       id: usuario.id,
       username: usuario.username,
@@ -68,6 +72,9 @@ router.post('/login', async (req, res, next) => {
  * servidor, así que con la cookie robada se puede seguir usando.
  */
 router.post('/logout', (req, res) => {
+  const sid = leerCookies(req).sid;
+  if (sid) revocarCsrfSesion(sid);
+  destruirSesion(req);
   res.clearCookie('sid', { path: '/' });
   res.json({ mensaje: 'Sesión cerrada.' });
 });
