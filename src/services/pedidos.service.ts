@@ -40,16 +40,17 @@ type Id = number | string;
  */
 export async function crear({ mesa, cliente, items }: NuevoPedido): Promise<PedidoConItems | null> {
   if (!items || !Array.isArray(items) || items.some((item) => item == null || item.cantidad <= 0 || !Number.isInteger(item.cantidad))) {
-    throw new Error('Items inválidos');
+      throw Object.assign(new Error('Items inválidos'), { status: 400 });
   }
   // FALLA: Los tipos de `NuevoPedido` NO alcanzan: el cuerpo de la petición 
   //        llega como `any` y en ejecución puede traer cualquier cosa.
   const filas: { productoId: number; cantidad: number; precioUnitario: number }[] = [];
 
   for (const item of items) {
-    // Si el producto no existe, buscarProducto devuelve null y `precio`
-    // revienta con un TypeError cuyo stack se filtra al cliente.
     const producto = await buscarProducto(item.productoId);
+    if (producto === undefined) {
+       throw Object.assign(new Error('Producto no encontrado'), { status: 400 });
+    }
     const precioUnitario = calcularPrecio(producto);
     filas.push({
       productoId: producto.id,
