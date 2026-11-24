@@ -25,8 +25,6 @@ type Id = number | string;
  * FALLA — Validación de entrada débil o insuficiente (OWASP A04:2021)
  * -----------------------------------------------------------------------------
  * No se valida nada de lo que llega en el cuerpo de la petición:
- *  - `cantidad` puede ser negativa (el total del pedido queda negativo),
- *    cero, un número decimal o un texto.
  *  - No hay un máximo de items ni de cantidad (DoS / facturas absurdas).
  *  - `mesa` y `cliente` no se validan ni se acotan en longitud.
  *  - Si el productoId no existe, la excepción sube y se filtra el stack.
@@ -41,9 +39,11 @@ type Id = number | string;
  * Total = suma de calcularPrecio(producto) x cantidad
  */
 export async function crear({ mesa, cliente, items }: NuevoPedido): Promise<PedidoConItems | null> {
-  // FALLA: no se valida que items exista, sea un array, ni que cada cantidad
-  // sea un entero positivo. Los tipos de `NuevoPedido` NO alcanzan: el cuerpo
-  // de la petición llega como `any` y en ejecución puede traer cualquier cosa.
+  if (!items || !Array.isArray(items) || items.some((item) => item == null || item.cantidad <= 0 || !Number.isInteger(item.cantidad))) {
+    throw new Error('Items inválidos');
+  }
+  // FALLA: Los tipos de `NuevoPedido` NO alcanzan: el cuerpo de la petición 
+  //        llega como `any` y en ejecución puede traer cualquier cosa.
   const filas: { productoId: number; cantidad: number; precioUnitario: number }[] = [];
 
   for (const item of items) {
