@@ -113,13 +113,17 @@ async function buscarProducto(conexion: PoolClient, productoId: number): Promise
 
 /** Lista pedidos (con filtro opcional por mesa). */
 export async function listar(mesa?: string): Promise<Pedido[]> {
-  // FALLA: inyección SQL en el filtro de mesa.
-  let sql = 'SELECT * FROM pedidos';
-  if (mesa) sql += ` WHERE mesa = '${mesa}'`;
-  sql += ' ORDER BY id DESC';
-
-  const { rows } = await db.query<Pedido>(sql);
-  return rows;
+  if (mesa){
+    if (typeof mesa!== 'string' || mesa.trim().length < 1 || mesa.trim().length > 10) {
+      throw Object.assign(new Error('Mesa inválida'), { status: 400 });
+    }
+    const { rows } = await db.query<Pedido>('SELECT * FROM pedidos WHERE mesa = $1 ORDER BY id DESC', [mesa.trim()]);
+    return rows;
+  }
+  else {
+    const { rows } = await db.query<Pedido>('SELECT * FROM pedidos ORDER BY id DESC');
+    return rows;
+  }
 }
 
 /** Devuelve un pedido con sus items. */
