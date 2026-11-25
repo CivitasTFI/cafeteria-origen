@@ -1,6 +1,7 @@
 import * as db from './db';
 import { CATALOGO } from './catalogo';
 import type { Rol } from './tipos';
+import { hashearPassword } from './services/usuarios.service';
 
 interface UsuarioInicial {
   username: string;
@@ -54,12 +55,13 @@ export const USUARIOS_INICIALES: UsuarioInicial[] = [
 export async function inicializarBase(): Promise<void> {
   // --- Usuarios -------------------------------------------------------------
   for (const usuario of USUARIOS_INICIALES) {
-    // FALLA: la contraseña se guarda tal cual, sin hash ni salt.
+    const passwordHash = await hashearPassword(usuario.password);
+
     await db.query(
       `INSERT INTO usuarios (username, password, rol, nombre)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (username) DO NOTHING`,
-      [usuario.username, usuario.password, usuario.rol, usuario.nombre]
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (username) DO NOTHING`,
+      [usuario.username, passwordHash, usuario.rol, usuario.nombre]
     );
   }
 

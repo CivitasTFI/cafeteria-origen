@@ -1,6 +1,6 @@
 import * as db from '../db';
 import type { Usuario } from '../tipos';
-
+import * as bcrypt from 'bcryptjs';
 /**
  * Servicio de usuarios.
  *
@@ -24,6 +24,13 @@ import type { Usuario } from '../tipos';
  * -----------------------------------------------------------------------------
  */
 
+const COSTO_HASH = 10;
+export type UsuarioPublico = Omit<Usuario, 'password'>;
+/** Genera un hash bcrypt para una contraseña en texto plano. */
+export async function hashearPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, COSTO_HASH);
+}
+
 /** Busca un usuario por nombre de usuario exacto (query parametrizada). */
 export async function buscarPorUsername(username: string): Promise<Usuario | null> {
   const { rows } = await db.query<Usuario>(
@@ -38,46 +45,84 @@ export async function buscarPorUsername(username: string): Promise<Usuario | nul
  * Devuelve el usuario o null.
  */
 export async function autenticar(username: string, password: string): Promise<Usuario | null> {
-  // FALLA: inyección SQL — la entrada del usuario se concatena en la consulta.
-  const sql = `SELECT * FROM usuarios WHERE username = '${username}' AND password = '${password}'`;
-  const { rows } = await db.query<Usuario>(sql);
-  return rows[0] || null;
+  const usuario = await buscarPorUsername(username);
+
+  if (!usuario) {
+    return null;
+  }
+
+  const passwordValida = await bcrypt.compare(password, usuario.password);
+
+  if (!passwordValida) {
+    return null;
+  }
+
+  return usuario;
 }
 
 /** Lista todos los usuarios (para el panel de administración). */
-export async function listar(): Promise<Usuario[]> {
-  const { rows } = await db.query<Usuario>('SELECT * FROM usuarios ORDER BY id');
+export async function listar(): Promise<UsuarioPublico[]> {
+  const { rows } = await db.query<UsuarioPublico>(
+    'SELECT id, username, rol, nombre, creado_en FROM usuarios ORDER BY id'
+  );
   return rows;
 }
 
 /**
- * Actualiza un usuario.
- * FALLA — Asignación masiva / escalada de privilegios: se actualiza el rol
- * sin verificar que quien llama tenga permiso para hacerlo.
+ * Actualiza los datos de un usuario.
+ *
+ * SEGURIDAD:
+ * - Restringe los campos modificables mediante una lista permitida.
+ * - Hashea la contraseña antes de almacenarla.
+ * - Devuelve únicamente datos públicos, sin exponer el hash.
+ *
+ * IMPORTANTE:
+ * La autorización para modificar roles debe controlarse en la ruta
+ * correspondiente mediante el middleware de permisos.
  */
-export async function actualizar(id: number | string, cambios: Partial<Usuario>): Promise<Usuario | null> {
+export async function actualizar(id: number | string, cambios: Partial<Usuario>): Promise<UsuarioPublico | null> {
   const campos: string[] = [];
   const valores: unknown[] = [];
-  let i = 1;
+
+  const camposPermitidos = ['username', 'nombre', 'rol', 'password'];
+
   for (const [campo, valor] of Object.entries(cambios)) {
-    campos.push(`${campo} = $${i}`);
-    valores.push(valor);
-    i += 1;
+    if (!camposPermitidos.includes(campo)) {
+      continue;
+    }
+
+    let valorFinal = valor;
+
+    if (campo === 'password' && typeof valor === 'string') {
+      valorFinal = await hashearPassword(valor);
+    }
+
+    campos.push(`${campo} = $${valores.length + 1}`);
+    valores.push(valorFinal);
   }
+
   if (campos.length === 0) return null;
+
   valores.push(id);
-  const { rows } = await db.query<Usuario>(
-    `UPDATE usuarios SET ${campos.join(', ')} WHERE id = $${i} RETURNING *`,
+
+  const { rows } = await db.query<UsuarioPublico>(
+    `UPDATE usuarios SET ${campos.join(', ')} WHERE id = $${valores.length} RETURNING id, username, rol, nombre, creado_en`,
     valores
   );
+
   return rows[0] || null;
 }
 
-/** Cambia la contraseña de un usuario (se guarda en texto plano). */
-export async function cambiarPassword(id: number, nuevaPassword: string): Promise<Usuario | null> {
-  const { rows } = await db.query<Usuario>(
-    'UPDATE usuarios SET password = $1 WHERE id = $2 RETURNING *',
-    [nuevaPassword, id]
+export async function cambiarPassword(id: number, nuevaPassword: string): Promise<UsuarioPublico | null> {
+  const passwordHash = await hashearPassword(nuevaPassword);
+
+  const { rows } = await db.query<UsuarioPublico>(
+    `UPDATE usuarios
+      SET password = $1
+      WHERE id = $2
+      RETURNING id, username, rol, nombre, creado_en`,
+    [passwordHash, id]
   );
+
   return rows[0] || null;
 }
