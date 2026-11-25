@@ -24,8 +24,6 @@ function esTextoValido(valor: unknown): valor is string {
 
 router.use(requiereSesion);
 
-const MAX_BYTES_CONTRASENA_BCRYPT = 72;
-
 /** POST /api/admin/cambiar-contrasena — cambio personal para toda sesión válida. */
 router.post('/cambiar-contrasena', async (req, res, next) => {
   try {
@@ -33,10 +31,10 @@ router.post('/cambiar-contrasena', async (req, res, next) => {
     if (!nueva) {
       return res.status(400).json({ error: 'Falta la contraseña nueva.' });
     }
-    if (!esTextoValido(nueva) || nueva.trim().length === 0) {
+    if (!usuarios.esFormatoPasswordValido(nueva)) {
       return res.status(400).json({ error: 'Contraseña nueva inválida.' });
     }
-    if (Buffer.byteLength(nueva, 'utf8') > MAX_BYTES_CONTRASENA_BCRYPT) {
+    if (usuarios.excedeLimitePassword(nueva)) {
       return res.status(400).json({ error: 'La contraseña nueva no puede superar 72 bytes en UTF-8.' });
     }
 
@@ -91,7 +89,7 @@ router.put('/usuarios/:id', async (req, res, next) => {
     if (rol !== undefined && !esRolAdministrable(rol)) {
       return res.status(400).json({ error: 'Rol inválido.' });
     }
-    if (password !== undefined && (!esTextoValido(password) || password.length === 0)) {
+    if (password !== undefined && (!usuarios.esFormatoPasswordValido(password) || usuarios.excedeLimitePassword(password))) {
       return res.status(400).json({ error: 'Contraseña inválida.' });
     }
 
