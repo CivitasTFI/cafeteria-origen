@@ -71,19 +71,20 @@ services:
     volumes:
       # Montaje del código en el host: se edita con el IDE y el contenedor
       # toma los cambios al reiniciar (docker compose restart app).
-      - ./src:/app/src
-      - ./tests:/app/tests
-      - ./scripts:/app/scripts
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+      - ./scripts:/app/scripts:ro
       # El checklist de seguridad revisa también la configuración de Docker.
       - ./docker-compose.yml:/app/docker-compose.yml:ro
       - ./Dockerfile:/app/Dockerfile:ro
       - ./tsconfig.json:/app/tsconfig.json:ro
-      - ./uploads:/app/uploads
+      - ${UPLOADS_STORAGE:-archivos_origen}:/app/uploads
     networks:
       - red_origen
 
 volumes:
   datos_origen:
+  archivos_origen:
 
 networks:
   red_origen:

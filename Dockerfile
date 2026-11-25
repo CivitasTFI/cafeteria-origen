@@ -24,8 +24,10 @@ COPY tests ./tests
 # (configuración de Docker, mínimos privilegios en la base de datos).
 COPY docker-compose.yml Dockerfile ./
 
-# Carpeta de archivos subidos
-RUN mkdir -p /app/uploads
+# Carpeta de archivos subidos. En un volumen nuevo se conservan estos permisos.
+RUN mkdir -p /app/uploads && chown node:node /app/uploads
+
+USER node
 
 EXPOSE 3000
 
