@@ -142,6 +142,6 @@ Las advertencias sobre contraseñas de práctica triviales se registran como rie
 - [ ] Excepción JSON de login y controles de origen verificados localmente.
 - [ ] Cookies, ID aleatorio y vencimiento absoluto implementados y comprobados.
 - [ ] Logout y revocación por contraseña/rol integrados.
-- [ ] Limitador verificado dentro de diez solicitudes sin penalizar éxitos.
+- [x] Limitador verificado dentro de diez solicitudes sin penalizar éxitos.
 - [ ] Baterías originales y casos legítimos autorizados registrados.
 - [ ] PR hacia `develop` revisado con evidencia y reflexión por falla.
