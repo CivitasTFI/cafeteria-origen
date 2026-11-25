@@ -11,7 +11,6 @@
 # Levantar:   docker compose up -d --build
 # Ver logs:    docker compose logs -f app
 # Bajar todo: docker compose down
-# Resetear:   docker compose down -v   (borra el volumen de la base)
 # =============================================================================
 
 services:
@@ -22,18 +21,21 @@ services:
     environment:
       POSTGRES_DB: origen
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      # VULNERABILIDAD (configuración): se usa una contraseña trivial y la base
-      # de datos acepta conexiones desde cualquier origen ("trust"), sin
-      # contraseña ni cifrado. Corregir → md5/scram-sha-256 + contraseña robusta.
-      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Configurar POSTGRES_PASSWORD en .env}"
+      DB_PASSWORD: "${DB_PASSWORD:?Configurar DB_PASSWORD en .env}"
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
     volumes:
       - datos_origen:/var/lib/postgresql/data
       - ./docker/initdb:/docker-entrypoint-initdb.d:ro
     networks:
       - red_origen
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d origen"]
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$${DB_PASSWORD}" psql -X -w -h 127.0.0.1
+          -U origen_app -d origen -Atqc 'SELECT 1' >/dev/null
       interval: 5s
       timeout: 5s
       retries: 10
@@ -53,35 +55,36 @@ services:
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: origen
-      # VULNERABILIDAD (mínimos privilegios): la aplicación se conecta con el
-      # superusuario `postgres`. Corregir → usar el usuario `origen_app` que
-      # sólo tiene permisos sobre las tablas del catálogo (ver
-      # docker/initdb/02-usuario-aplicacion.sql).
-      DB_USER: postgres
-      DB_PASSWORD: postgres
+      DB_USER: origen_app
+      DB_PASSWORD: "${DB_PASSWORD:?Configurar DB_PASSWORD en .env}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Configurar ADMIN_PASSWORD en .env}"
+      DEMO_MODE: "${DEMO_MODE:-false}"
+      DEMO_PASSWORD: "${DEMO_PASSWORD:-}"
       UPLOADS_DIR: /app/uploads
       # Puerto publicado en el host, sólo para los mensajes de arranque.
       APP_PORT: "${APP_PORT:-8080}"
+      APP_ORIGIN: "${APP_ORIGIN:-http://localhost:${APP_PORT:-8080}}"
     ports:
       # Puerto en el host. Si en tu máquina el 8080 está ocupado, exportá
       # APP_PORT=8090 antes de `docker compose up` (o ponelo en un .env).
-      - "${APP_PORT:-8080}:3000"
+      - "127.0.0.1:${APP_PORT:-8080}:3000"
     volumes:
       # Montaje del código en el host: se edita con el IDE y el contenedor
       # toma los cambios al reiniciar (docker compose restart app).
-      - ./src:/app/src
-      - ./tests:/app/tests
-      - ./scripts:/app/scripts
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+      - ./scripts:/app/scripts:ro
       # El checklist de seguridad revisa también la configuración de Docker.
       - ./docker-compose.yml:/app/docker-compose.yml:ro
       - ./Dockerfile:/app/Dockerfile:ro
       - ./tsconfig.json:/app/tsconfig.json:ro
-      - ./uploads:/app/uploads
+      - ${UPLOADS_STORAGE:-archivos_origen}:/app/uploads
     networks:
       - red_origen
 
 volumes:
   datos_origen:
+  archivos_origen:
 
 networks:
   red_origen:

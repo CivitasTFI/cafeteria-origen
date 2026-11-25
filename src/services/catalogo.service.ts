@@ -34,25 +34,51 @@ type Id = number | string;
 /** Lista productos aplicando los filtros del menú. */
 export async function listar(filtros: FiltrosCatalogo = {}): Promise<ProductoConPrecio[]> {
   const { tipo, variedad, q } = filtros;
+  const tiposPermitidos = ['espresso', 'filtrado', 'pasteleria'];
+  const variedadesPermitidas = ['Brasil', 'Colombia', 'Etiopía'];
 
-  // FALLA: concatenación directa de entrada de usuario en la consulta.
-  let sql = 'SELECT * FROM productos WHERE activo = true';
-  if (tipo) sql += ` AND tipo = '${tipo}'`;
-  if (variedad) sql += ` AND variedad = '${variedad}'`;
-  if (q) {
-    sql += ` AND (nombre ILIKE '%${q}%' OR descripcion ILIKE '%${q}%')`;
+  if (tipo !== undefined && tipo !== '' && !tiposPermitidos.includes(tipo)) {
+    throw Object.assign(new Error('Tipo de producto inválido'), { status: 400 });
   }
+  if (variedad!==undefined && variedad !== '' && !variedadesPermitidas.includes(variedad)) {
+    throw Object.assign(new Error('Variedad inválida'), { status: 400 });
+  }
+  if (q !== undefined && (typeof q !== 'string' || q.length > 100)) {
+    throw Object.assign(new Error('Búsqueda no válida'), {status: 400});
+  }
+  const parametros: string[] = [];
+  let sql = 'SELECT * FROM productos WHERE activo = true';
+
+  if (tipo){
+    parametros.push(tipo);
+    sql+= ` AND tipo = $${parametros.length}`;
+  }
+  if (variedad){
+    parametros.push(variedad);
+    sql+= ` AND variedad = $${parametros.length}`;
+  }
+  if (q){
+    parametros.push(`%${q}%`);
+    const posicion = parametros.length;
+    sql += ` AND (nombre ILIKE $${posicion} OR descripcion ILIKE $${posicion})`;
+  }
+
   sql += ' ORDER BY tipo, variedad NULLS FIRST, id';
 
-  const { rows } = await db.query<Producto>(sql);
+  const { rows } = await db.query<Producto>(sql, parametros);
 
   return rows.map((p) => ({ ...p, precio: calcularPrecio(p) }));
 }
 
 /** Obtiene un producto por id. */
 export async function obtener(id: Id): Promise<ProductoConPrecio | null> {
-  // FALLA: inyección SQL en el id.
-  const { rows } = await db.query<Producto>(`SELECT * FROM productos WHERE id = '${id}'`);
+  if (typeof id === 'string' && /^[0-9]+$/.test(id)) {
+        id = Number(id);
+      }
+  if (typeof id !== 'number' || !Number.isInteger(id) || id < 1 || id > 2_147_483_647) {
+        throw Object.assign(new Error('ID de producto inválido'), { status: 400 });
+  }
+  const { rows } = await db.query<Producto>(`SELECT * FROM productos WHERE id = $1`, [id]);
   if (!rows[0]) return null;
   return { ...rows[0], precio: calcularPrecio(rows[0]) };
 }
