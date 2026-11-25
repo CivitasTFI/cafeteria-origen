@@ -1,104 +1,62 @@
-# ☕ Cafetería Origen — proyecto didáctico de Ciberseguridad
+# ☕ Cafetería Origen — TP4 de Ciberseguridad
 
-> Sitio web + API de una cafetería de especialidad **deliberadamente vulnerable**,
-> para el práctico de **Redes y Seguridad (Programación IV)**.
->
-> La historia es la de **Valentina**, que abrió una cafetería de especialidad y
-> necesita ordenar los pedidos que hoy anota en un cuaderno.
-
-El proyecto **funciona**: la web anda, la API responde, los pedidos se calculan
-y los tests pasan. Sobre esa base hay **fallas de seguridad reales** (OWASP Top 10)
-que los alumnos tienen que encontrar, observar, explicar y corregir.
+Sitio web y API de una cafetería de especialidad para el práctico de **Redes y Seguridad (Programación IV)**. El ejercicio parte del sistema de Valentina y consiste en corregir fallas de seguridad conservando catálogo, pedidos, reseñas, reportes y administración.
 
 ---
 
 ## 1. Levantar el proyecto
 
-Requisitos: **Docker Desktop** (o Docker Engine + Compose v2).
+Para iniciar, necesitás **Docker Desktop** en ejecución (o Docker Engine con Compose v2) y un puerto HTTP local disponible. Ejecutá los comandos desde la raíz del repositorio.
+
+1. Si todavía no existe `.env`, copiá `.env.example` a `.env`.
+2. Completá `POSTGRES_PASSWORD` para administrar PostgreSQL, `DB_PASSWORD` para el rol de aplicación `origen_app` y `ADMIN_PASSWORD` para entrar al panel como `admin`. Usá valores privados, aleatorios y distintos. El administrador inicial necesita al menos 12 caracteres y como máximo 72 bytes UTF-8.
+3. Si el puerto 8080 está ocupado, configurá `APP_PORT` en `.env`. Compose calcula `APP_ORIGIN` como `http://localhost:<APP_PORT>`. Si abrís la aplicación con otro host, esquema o puerto, poné el origen exacto del navegador, sin barra final (por ejemplo `http://127.0.0.1:8090`).
+4. Iniciá los servicios y comprobá su estado.
 
 ```bash
-cd cafeteria-origen
 docker compose up -d --build
+docker compose ps
 ```
 
-| Qué | Dónde |
+| Qué | Dónde con el puerto predeterminado |
 |---|---|
 | Sitio web | http://localhost:8080 |
 | Panel de administración | http://localhost:8080/admin.html |
 | API | http://localhost:8080/api |
 | Healthcheck | http://localhost:8080/api/salud |
 
-> **Si el puerto 8080 está ocupado** (es muy común en máquinas con varios
-> proyectos): `export APP_PORT=8090` (Linux/macOS) o `$env:APP_PORT=8090`
-> (PowerShell) antes de `docker compose up -d`.
+Compose publica HTTP en `127.0.0.1` y mantiene PostgreSQL sin puerto publicado. En un **volumen nuevo**, PostgreSQL crea el esquema y el rol `origen_app` con autenticación SCRAM-SHA-256 y permisos limitados. La aplicación usa ese rol y carga el catálogo y los usuarios iniciales. Abrí el catálogo y probá el login para comprobar que la carga terminó.
 
-Otros comandos:
+En un **volumen existente**, los scripts de inicio de PostgreSQL no se vuelven a ejecutar. Cambiar `.env` tampoco cambia las claves de PostgreSQL ni de usuarios ya guardados. Conservá las credenciales de esa instalación y usá un entorno separado para probar una inicialización nueva. Los nombres de contenedor `origen_app` y `origen_db` y la red `red_origen` deben estar disponibles para el arranque estándar.
+
+La aplicación corre como usuario `node` y guarda imágenes en el volumen `archivos_origen`. Si necesitás seguir utilizando un directorio de imágenes de una instalación anterior, configurá `UPLOADS_STORAGE=./uploads` y verificá que el usuario del contenedor tenga lectura del directorio y escritura para nuevas subidas. Se conservan los archivos del directorio anterior.
 
 ```bash
-docker compose ps              # estado de los contenedores
-docker compose logs -f app     # logs de la aplicación
-docker compose restart app     # reiniciar tras editar código
-docker compose down            # bajar los contenedores
-docker compose down -v         # bajar TODO y borrar la base (volumen)
+docker compose logs app
+docker compose stop
 ```
 
-### Editar código
+En desarrollo, `src`, `tests` y `scripts` se montan desde el checkout. Usá `docker compose restart app` tras editar código y `docker compose up -d --build` si cambian la imagen o sus dependencias. `docker compose down` retira los contenedores y la red y conserva los volúmenes.
 
-El código está **montado desde el host** (`./src`, `./tests`, `./scripts`), así que
-se edita con el IDE y el contenedor toma los cambios al reiniciar:
+### Verificar
 
-```bash
-docker compose restart app
-```
-
-### Correr los tests
-
-Hay **dos baterías**, y conviene entender la diferencia:
-
-| Comando | Qué mide | Al empezar | Al terminar |
-|---|---|---|---|
-| `npm test` | **Funcional**: el negocio (catálogo, pedidos, login, reportes) | ✔ en verde | ✔ en verde |
-| `npm run test:seguridad` | **Seguridad**: comprueba que las fallas estén corregidas | ✘ en rojo | ✔ en verde |
-| `npm run test:todo` | Las dos juntas | — | — |
+Usá la base nueva y descartable de la práctica. Los tests escriben datos.
 
 ```bash
-docker compose exec app npm test              # tests funcionales
-docker compose exec app npm run test:seguridad # batería de seguridad
-docker compose exec app npm run test:todo      # todo junto
-```
-
-> **La batería funcional** describe el comportamiento del negocio. Debe quedar
-> **en verde antes de las correcciones y en verde después** (los helpers ya
-> buscan el token anti-CSRF si existe, así que el token no los rompe).
->
-> **La batería de seguridad** (`tests/seguridad*.test.ts`) es la que comprueba que
-> las vulnerabilidades estén **solucionadas**: al principio falla casi entera,
-> porque el proyecto es vulnerable a propósito. Cada test que falla dice **qué
-> corregir y en qué archivo**. Es la **rúbrica automática** del práctico.
-
-### Correr la checklist de seguridad
-
-```bash
+docker compose exec app npm test
+docker compose exec app npm run typecheck
 docker compose exec app npm run check:security
 ```
 
-Devuelve **1** mientras queden controles críticos sin cubrir. Es el **análisis
-estático** que complementa a la batería: mira el código, no ejecuta ataques.
-El objetivo es que termine en `✔` sin que se rompan los tests.
+La consigna incluye la batería `test:seguridad` y el script combinado `test:todo`. Registrá qué verificaciones de la rúbrica ejecutaste y cuáles quedan pendientes. El checker analiza código y devuelve `1` si falla un control crítico. `AUTH-02` reconoce el uso de `hashPassword()` en `inicializar.ts`. En una base nueva, el seed almacena los hashes bcrypt generados por el servicio de usuarios.
 
 ---
 
-## 2. Usuarios de prueba
+## 2. Usuarios de práctica
 
-| Usuario | Contraseña | Rol | Qué sirve para |
-|---|---|---|---|
-| `admin` | `admin` | admin | Credencial **por defecto** (falla de configuración) |
-| `valentina` | `origen2024` | admin | La dueña del negocio |
-| `barista` | `cafe123` | barista | Usuario legítimo no administrador |
-| `mozo` | `mozo123` | mozo | Personal de sala |
-| `cliente` | `cliente` | cliente | Para probar la **escalada de privilegios** |
+En una instalación normal se crea únicamente `admin` con `ADMIN_PASSWORD`. Para activar la demo local, configurá `DEMO_MODE=true` y completá `DEMO_PASSWORD` con otra clave privada que respete los mismos límites. La demo agrega `valentina` como administradora con `ADMIN_PASSWORD` y los perfiles `barista`, `mozo` y `cliente` con `DEMO_PASSWORD`. Desactivar el modo demo evita nuevos usuarios de demo y conserva las cuentas que ya existen en el volumen.
 
-Las contraseñas están en **texto plano** en la base (falla intencional).
+Las contraseñas se guardan como hashes bcrypt. Mantené `.env` fuera de Git.
 
 ---
 
@@ -113,13 +71,13 @@ cafeteria-origen/
 ├── src/
 │   ├── server.ts               # arranque
 │   ├── app.ts                  # Express, middlewares, rutas
-│   ├── config.ts               # configuración  ← secretos hardcodeados (falla)
+│   ├── config.ts               # configuración por variables de entorno
 │   ├── db.ts                   # pool de PostgreSQL
 │   ├── catalogo.ts             # catálogo y cálculo de precios
 │   ├── inicializar.ts          # carga inicial de datos
 │   ├── tipos.ts                # tipos compartidos (filas de la base, sesión)
 │   ├── middleware/             # sesión, auth, errores
-│   ├── services/               # lógica de negocio  ← inyecciones SQL
+│   ├── services/               # lógica de negocio
 │   ├── routes/                 # endpoints REST
 │   └── public/                 # el sitio web (HTML + CSS + JS)
 ├── tests/                      # tests funcionales (npm test)
@@ -210,8 +168,7 @@ corregirlas están en:
 - **[`GUIA-PRACTICA.md`](GUIA-PRACTICA.md)** — para los alumnos.
 
 
-Cada falla de la tabla tiene además **un test que la detecta** en
-`npm run test:seguridad`. El mapeo falla → test está en
+La tabla describe la versión inicial del práctico. El mapeo de los casos de seguridad está en
 [`VULNERABILIDADES.md`](VULNERABILIDADES.md) (columna *Test que la detecta*).
 
 ---

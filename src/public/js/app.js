@@ -14,16 +14,24 @@
     carrito: cargarCarrito(),
   };
 
-  var csrfToken = null;
+  var contextoCsrf = null;
+  var consultaCsrf = null;
 
   function obtenerCsrf() {
-    if (csrfToken) return Promise.resolve(csrfToken);
-    return fetch(API + '/csrf-token', { credentials: 'same-origin' })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        csrfToken = d.token;
-        return csrfToken;
-      });
+    if (contextoCsrf) return Promise.resolve(contextoCsrf);
+    if (!consultaCsrf) {
+      consultaCsrf = api('/csrf-token', { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (resp) {
+          var token = resp.data?.token;
+          if (!resp.ok || typeof token !== 'string' || !token.trim()) {
+            throw new Error('No se recibió un token CSRF válido.');
+          }
+          contextoCsrf = { token: token };
+          return contextoCsrf;
+        })
+        .finally(function () { consultaCsrf = null; });
+    }
+    return consultaCsrf;
   }
 
   /* ---------------------------------------------------------------- utils */
@@ -34,11 +42,11 @@
     return n.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
   }
 
-  function raw(valor) {
-    // FALLA: esta función NO escapa nada, devuelve el valor tal cual.
-    // La forma correcta de renderizar texto del servidor es escaparHtml()
-    // (o textContent en vez de innerHTML).
-    return String(valor == null ? '' : valor);
+  function elemento(etiqueta, clase, texto) {
+    var nodo = document.createElement(etiqueta);
+    if (clase) nodo.className = clase;
+    nodo.textContent = texto ?? '';
+    return nodo;
   }
 
   function api(url, opciones) {
@@ -49,9 +57,24 @@
     });
   }
 
-  function postJSON(url, cuerpo) {
-    return obtenerCsrf().then(function (token) {
-      return api(url, {
+  var MENSAJE_ENVIO_INCIERTO = 'No pudimos confirmar el envío. Verificá si quedó registrado antes de volver a intentarlo.';
+
+  function falloEnvio(mensaje) {
+    return { ok: false, mensaje: mensaje };
+  }
+
+  async function postJSON(url, cuerpo) {
+    var contexto;
+    try {
+      contexto = await obtenerCsrf();
+    } catch {
+      return falloEnvio('No pudimos obtener la verificación de seguridad. Volvé a intentar.');
+    }
+
+    var resp;
+    try {
+      var token = contexto.token;
+      resp = await api(url, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -60,7 +83,25 @@
         },
         body: JSON.stringify(Object.assign({}, cuerpo || {}, { _csrf: token })),
       });
-    });
+    } catch {
+      return falloEnvio(MENSAJE_ENVIO_INCIERTO);
+    }
+
+    if (resp.status === 403 && resp.data?.error === 'Token CSRF inválido o faltante') {
+      // Un rechazo demorado sólo puede invalidar el contexto que usó esa escritura.
+      if (contextoCsrf === contexto) contextoCsrf = null;
+      try {
+        await obtenerCsrf();
+        return falloEnvio('La verificación de seguridad se actualizó. Volvé a enviar el formulario.');
+      } catch {
+        return falloEnvio('No pudimos actualizar la verificación de seguridad. Volvé a intentar.');
+      }
+    }
+
+    if (resp.status >= 500 || (resp.ok && (resp.status !== 201 || !Number.isInteger(resp.data?.id)))) {
+      return falloEnvio(MENSAJE_ENVIO_INCIERTO);
+    }
+    return resp;
   }
 
   function guardarCarrito() {
@@ -75,12 +116,6 @@
     } catch (e) {
       return [];
     }
-  }
-
-  function escaparHtml(texto) {
-    var div = document.createElement('div');
-    div.textContent = texto == null ? '' : String(texto);
-    return div.innerHTML;
   }
 
   /* ------------------------------------------------------------- catálogo */
@@ -108,53 +143,47 @@
     var grid = $('#productos-grid');
 
     if (!productos || productos.length === 0) {
-      grid.innerHTML = '<p class="empty">No encontramos productos con esos filtros.</p>';
+      grid.replaceChildren(elemento('p', 'empty', 'No encontramos productos con esos filtros.'));
       return;
     }
 
-    // ---------------------------------------------------------------
-    // FALLA (XSS reflejado / almacenado): el HTML se construye con
-    // innerHTML a partir de datos que vienen del servidor (nombres de
-    // producto y texto de la búsqueda). Un "<script>" en el buscador o
-    // en el nombre de un producto se ejecuta en el navegador.
-    //
-    // Corrección: usar textContent, o escapar los valores antes de
-    // interpolarlos (ver la función escaparHtml de arriba).
-    // ---------------------------------------------------------------
-    grid.innerHTML = productos.map(function (p) {
+    var tarjetas = document.createDocumentFragment();
+    productos.forEach(function (p) {
       window.__productos[p.id] = p;
-      var tags = '<span class="tag">' + DOMPurify.sanitize(raw(p.tipo)) + '</span>';
-      if (p.variedad) tags += '<span class="tag tag-origen">' + DOMPurify.sanitize(raw(p.variedad)) + '</span>';
-      if (p.tamano) tags += '<span class="tag">' + DOMPurify.sanitize(raw(p.tamano)) + '</span>';
 
-      return '' +
-        '<article class="product-card">' +
-        '  <div class="product-top">' +
-        '    <h3 class="product-name">' + DOMPurify.sanitize(raw(p.nombre)) + '</h3>' +
-        '    <span class="product-price">' + DOMPurify.sanitize(money(p.precio)) + '</span>' +
-        '  </div>' +
-        '  <div class="product-tags">' + tags + '</div>' +
-        '  <p class="product-desc">' + DOMPurify.sanitize(raw(p.descripcion)) + '</p>' +
-        '  <button class="btn btn-ghost btn-agregar" data-id="' + DOMPurify.sanitize(raw(p.id)) + '">Agregar</button>' +
-        '</article>';
-    }).join('');
+      var cabecera = elemento('div', 'product-top');
+      cabecera.append(elemento('h3', 'product-name', p.nombre), elemento('span', 'product-price', money(p.precio)));
+
+      var tags = elemento('div', 'product-tags');
+      tags.append(elemento('span', 'tag', p.tipo));
+      if (p.variedad) tags.append(elemento('span', 'tag tag-origen', p.variedad));
+      if (p.tamano) tags.append(elemento('span', 'tag', p.tamano));
+
+      var agregar = elemento('button', 'btn btn-ghost btn-agregar', 'Agregar');
+      agregar.type = 'button';
+      agregar.dataset.id = p.id ?? '';
+
+      var tarjeta = elemento('article', 'product-card');
+      tarjeta.append(cabecera, tags, elemento('p', 'product-desc', p.descripcion), agregar);
+      tarjetas.append(tarjeta);
+    });
+    grid.replaceChildren(tarjetas);
   }
 
   function renderResultado(filtros, total) {
     var el = $('#resultado-busqueda');
 
-    // FALLA (XSS reflejado): se interpola el texto buscado con innerHTML.
     if (filtros && filtros.q) {
-      // Se sanitiza con DOMPurify
-      el.innerHTML = DOMPurify.sanitize('Resultados para <strong>' + filtros.q + '</strong> — ' + total + ' producto(s)');
+      el.replaceChildren('Resultados para ', elemento('strong', '', filtros.q), ' — ' + total + ' producto(s)');
     } else {
       el.textContent = total + ' producto(s) en el menú';
     }
   }
 
   function renderErrorProductos(mensaje) {
-    // También se sanitiza para impedir posibles respuestas maliciosas del servidor
-    $('#productos-grid').innerHTML = DOMPurify.sanitize('<p class="empty">No se pudo cargar el menú: ' + (mensaje || 'error desconocido') + '</p>');
+    $('#productos-grid').replaceChildren(
+      elemento('p', 'empty', 'No se pudo cargar el menú: ' + (mensaje || 'error desconocido'))
+    );
   }
 
   /* --------------------------------------------------------------- carrito */
@@ -192,51 +221,69 @@
     renderCarrito();
   }
 
+  function botonCarrito(accion, indice, texto, clase) {
+    var boton = elemento('button', clase, texto);
+    boton.type = 'button';
+    boton.dataset.acc = accion;
+    boton.dataset.i = indice;
+    return boton;
+  }
+
   function renderCarrito() {
     var cont = $('#carrito');
     var lista = $('#resumen-carrito');
     var total = 0;
 
     if (estado.carrito.length === 0) {
-      cont.innerHTML = '<p class="empty">El carrito está vacío.</p>';
+      cont.replaceChildren(elemento('p', 'empty', 'El carrito está vacío.'));
       lista.textContent = '';
       $('#resumen-total').textContent = money(0);
       return;
     }
 
-    // Se mantiene el innerHTML pero se escapan los inputs con escaparHtml
-    cont.innerHTML = estado.carrito.map(function (item, i) {
+    var filas = document.createDocumentFragment();
+    var resumen = document.createDocumentFragment();
+    estado.carrito.forEach(function (item, i) {
       var subtotal = item.precio * item.cantidad;
       total += subtotal;
-      return '' +
-        '<div class="cart-item">' +
-        '  <div>' +
-        '    <div class="cart-item-name">' + DOMPurify.sanitize(item.nombre) + '</div>' +
-        '    <div class="cart-item-meta">' + DOMPurify.sanitize(money(item.precio)) + ' c/u</div>' +
-        '  </div>' +
-        '  <div class="qty-control">' +
-        '    <button type="button" data-acc="menos" data-i="' + i + '">&minus;</button>' +
-        '    <span>' + DOMPurify.sanitize(item.cantidad) + '</span>' +
-        '    <button type="button" data-acc="mas" data-i="' + i + '">+</button>' +
-        '  </div>' +
-        '  <div>' +
-        '    <div class="cart-item-price">' + DOMPurify.sanitize(money(subtotal)) + '</div>' +
-        '    <button type="button" class="link-danger" data-acc="quitar" data-i="' + i + '">Quitar</button>' +
-        '  </div>' +
-        '</div>';
-    }).join('');
 
-    lista.innerHTML = estado.carrito.map(function (item) {
-      return '<li><span>' + DOMPurify.sanitize(raw(item.nombre)) + ' × ' + DOMPurify.sanitize(raw(item.cantidad)) + '</span><span>' +
-        DOMPurify.sanitize(money(item.precio * item.cantidad)) + '</span></li>';
-    }).join('');
+      var detalle = elemento('div');
+      detalle.append(
+        elemento('div', 'cart-item-name', item.nombre),
+        elemento('div', 'cart-item-meta', money(item.precio) + ' c/u')
+      );
 
+      var cantidad = elemento('div', 'qty-control');
+      cantidad.append(botonCarrito('menos', i, '−'), elemento('span', '', item.cantidad), botonCarrito('mas', i, '+'));
+
+      var precio = elemento('div');
+      precio.append(elemento('div', 'cart-item-price', money(subtotal)), botonCarrito('quitar', i, 'Quitar', 'link-danger'));
+
+      var fila = elemento('div', 'cart-item');
+      fila.append(detalle, cantidad, precio);
+      filas.append(fila);
+
+      var lineaResumen = elemento('li');
+      lineaResumen.append(
+        elemento('span', '', (item.nombre ?? '') + ' × ' + (item.cantidad ?? '')),
+        elemento('span', '', money(subtotal))
+      );
+      resumen.append(lineaResumen);
+    });
+
+    cont.replaceChildren(filas);
+    lista.replaceChildren(resumen);
     $('#resumen-total').textContent = money(total);
   }
 
   /* ---------------------------------------------------------------- pedidos */
   function enviarPedido(evento) {
     evento.preventDefault();
+    var formulario = evento.currentTarget;
+    var boton = formulario.querySelector('button[type="submit"]');
+    if (boton.disabled) return;
+    boton.disabled = true;
+
     var feedback = $('#pedido-feedback');
     feedback.className = 'form-feedback';
     feedback.textContent = 'Enviando…';
@@ -249,10 +296,8 @@
       }),
     }).then(function (resp) {
       if (!resp.ok) {
-        // FALLA (XSS reflejado): el mensaje del servidor se pinta con innerHTML.
-        // Se usa DOMPurify para sanitizar el mensaje
         feedback.className = 'form-feedback is-error';
-        feedback.textContent = DOMPurify.sanitize('No pudimos enviar el pedido: ' + (resp.data.error || 'error desconocido'));
+        feedback.textContent = resp.mensaje || ('No pudimos enviar el pedido: ' + (resp.data?.error || 'error desconocido'));
         return;
       }
       feedback.className = 'form-feedback is-ok';
@@ -261,42 +306,57 @@
       estado.carrito = [];
       guardarCarrito();
       renderCarrito();
-      $('#form-pedido').reset();
+      formulario.reset();
     }).catch(function () {
       feedback.className = 'form-feedback is-error';
-      feedback.textContent = 'Error de conexión con el servidor.';
+      feedback.textContent = MENSAJE_ENVIO_INCIERTO;
+    }).finally(function () {
+      boton.disabled = false;
     });
   }
 
   /* --------------------------------------------------------------- reseñas */
+  var MAX_AUTOR_RESENA = 40;
+  var MAX_TEXTO_RESENA = 280;
+
   function cargarReseñas() {
     return api('/comentarios').then(function (resp) {
       var cont = $('#lista-resenas');
-      if (!resp.ok || !resp.data.comentarios || resp.data.comentarios.length === 0) {
-        cont.innerHTML = '<p class="empty">Todavía no hay reseñas. ¡Sé el primero!</p>';
+      var comentarios = resp.data.comentarios;
+      if (!resp.ok || !Array.isArray(comentarios) || comentarios.length === 0) {
+        cont.replaceChildren(elemento('p', 'empty', 'Todavía no hay reseñas. ¡Sé el primero!'));
         return;
       }
-      // FALLA (XSS almacenado): el texto de la reseña viene de la base y se
-      // inyecta con innerHTML → se ejecuta en el navegador de cada visitante.
-      // Se sanitiza el texto de la reseña
-      cont.innerHTML = DOMPurify.sanitize(resp.data.comentarios.map(function (c) {
-        var estrellas = '';
-        var i;
-        for (i = 0; i < Number(c.calificacion || 0); i++) estrellas += '★';
-        return '' +
-          '<article class="review">' +
-          '  <div class="review-head">' +
-          '    <span class="review-author">' + raw(c.autor) + '</span>' +
-          '    <span class="review-stars">' + estrellas + '</span>' +
-          '  </div>' +
-          '  <p class="review-text">' + raw(c.texto) + '</p>' +
-          '</article>';
-      }).join(''));
+
+      var lista = document.createDocumentFragment();
+      comentarios.forEach(function (c) {
+        var autor = typeof c.autor === 'string' ? c.autor.slice(0, MAX_AUTOR_RESENA) : '';
+        var texto = typeof c.texto === 'string' ? c.texto.slice(0, MAX_TEXTO_RESENA) : '';
+        var calificacion = c.calificacion;
+        var estrellas = Number.isInteger(calificacion) && calificacion >= 1 && calificacion <= 5
+          ? '★'.repeat(calificacion)
+          : '';
+
+        var cabecera = elemento('div', 'review-head');
+        cabecera.append(
+          elemento('span', 'review-author', autor),
+          elemento('span', 'review-stars', estrellas)
+        );
+        var tarjeta = elemento('article', 'review');
+        tarjeta.append(cabecera, elemento('p', 'review-text', texto));
+        lista.append(tarjeta);
+      });
+      cont.replaceChildren(lista);
     });
   }
 
   function enviarReseña(evento) {
     evento.preventDefault();
+    var formulario = evento.currentTarget;
+    var boton = formulario.querySelector('button[type="submit"]');
+    if (boton.disabled) return;
+    boton.disabled = true;
+
     var feedback = $('#resena-feedback');
     feedback.className = 'form-feedback';
     feedback.textContent = 'Publicando…';
@@ -308,14 +368,20 @@
     }).then(function (resp) {
       if (!resp.ok) {
         feedback.className = 'form-feedback is-error';
-        // Se mantiene el innerHTML por si el error contiene HTML Pero se sanitiza el mensaje
-        feedback.innerHTML = DOMPurify.sanitize('No se pudo publicar: ' + (resp.data.error || 'error desconocido'));
+        feedback.textContent = resp.mensaje || ('No se pudo publicar: ' + (resp.data?.error || 'error desconocido'));
         return;
       }
       feedback.className = 'form-feedback is-ok';
       feedback.textContent = '¡Gracias por tu reseña!';
-      $('#form-resena').reset();
-      cargarReseñas();
+      formulario.reset();
+      return cargarReseñas().catch(function () {
+        feedback.textContent = 'La reseña se guardó. No pudimos actualizar la lista.';
+      });
+    }).catch(function () {
+      feedback.className = 'form-feedback is-error';
+      feedback.textContent = MENSAJE_ENVIO_INCIERTO;
+    }).finally(function () {
+      boton.disabled = false;
     });
   }
 

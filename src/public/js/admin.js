@@ -9,14 +9,16 @@
   var productosCache = {};
   var csrfToken = null;
 
-  function obtenerCsrf() {
-    if (csrfToken) return Promise.resolve(csrfToken);
-    return fetch(API + '/csrf-token', { credentials: 'same-origin' })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        csrfToken = d.token;
-        return csrfToken;
-      });
+  function obtenerCsrf(contexto) {
+    if (csrfToken) return Promise.resolve({ ok: true, data: { token: csrfToken } });
+    return api('/csrf-token', { cache: 'no-store' }).then(function (resp) {
+      if (!resp.ok || usuario !== contexto) return resp;
+      if (typeof resp.data.token !== 'string' || !resp.data.token) {
+        return { ok: false, status: resp.status, data: { error: 'No se pudo obtener el token de seguridad.' } };
+      }
+      csrfToken = resp.data.token;
+      return resp;
+    });
   }
 
   function headersConCsrf(token) {
@@ -33,119 +35,184 @@
     return Number(valor || 0).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
   }
 
-  function raw(valor) {
-    // FALLA: no escapa nada. Usar escaparHtml() / textContent.
-    return String(valor == null ? '' : valor);
+  function nodoTexto(etiqueta, valor, clase) {
+    var nodo = document.createElement(etiqueta);
+    nodo.textContent = valor == null ? '' : String(valor);
+    if (clase) nodo.className = clase;
+    return nodo;
   }
 
-  function escaparHtml(texto) {
-    var div = document.createElement('div');
-    div.textContent = texto == null ? '' : String(texto);
-    return div.innerHTML;
+  function prepararTabla(tabla, titulos, columnasNumericas) {
+    tabla.replaceChildren();
+    var encabezado = tabla.createTHead().insertRow();
+    titulos.forEach(function (titulo, indice) {
+      var clase = columnasNumericas && columnasNumericas.includes(indice) ? 'num' : '';
+      encabezado.append(nodoTexto('th', titulo, clase));
+    });
+    return tabla.createTBody();
+  }
+
+  function crearSelector(clase, valores, seleccionado) {
+    var select = document.createElement('select');
+    select.className = clase;
+    valores.forEach(function (valor) {
+      var opcion = nodoTexto('option', valor);
+      opcion.value = valor;
+      opcion.defaultSelected = valor === seleccionado;
+      select.append(opcion);
+    });
+    return select;
   }
 
   function api(url, opciones) {
     return fetch(API + url, opciones).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (data) {
-        return { ok: res.ok, status: res.status, data: data };
+        return { ok: res.ok, status: res.status, data: data || {} };
       });
+    }, function () {
+      return { ok: false, status: 0, data: { error: 'No se pudo conectar con el servidor.' } };
     });
   }
 
-  function postJSON(url, cuerpo) {
-    var body = cuerpo || {};
-    if (url === '/auth/login') {
-      return api(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-    }
-    return obtenerCsrf().then(function (token) {
-      return api(url, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: headersConCsrf(token),
-        body: JSON.stringify(Object.assign({}, body, { _csrf: token })),
-      });
+  function consultarSesion() {
+    return api('/auth/yo', { cache: 'no-store' });
+  }
+
+  function conSesion(peticion, recibir) {
+    var contexto = usuario;
+    if (!contexto) return Promise.resolve();
+
+    return peticion(contexto).then(function (resp) {
+      if (usuario !== contexto) return;
+      if (resp.status === 401) {
+        volverAlLogin('La sesión ya no está activa. Volvé a iniciar sesión.', false);
+        return;
+      }
+      return recibir(resp);
     });
   }
 
-  function putJSON(url, cuerpo) {
-    return obtenerCsrf().then(function (token) {
-      return api(url, {
-        method: 'PUT',
-        credentials: 'same-origin',
-        headers: headersConCsrf(token),
-        body: JSON.stringify(Object.assign({}, cuerpo || {}, { _csrf: token })),
-      });
-    });
+  function leerPanel(url, recibir) {
+    return conSesion(function () { return api(url); }, recibir);
   }
 
-  function patchJSON(url, cuerpo) {
-    return obtenerCsrf().then(function (token) {
-      return api(url, {
-        method: 'PATCH',
-        credentials: 'same-origin',
-        headers: headersConCsrf(token),
-        body: JSON.stringify(Object.assign({}, cuerpo || {}, { _csrf: token })),
+  function escribirPanel(metodo, url, cuerpo, recibir) {
+    return conSesion(function (contexto) {
+      return obtenerCsrf(contexto).then(function (resp) {
+        if (!resp.ok || usuario !== contexto) return resp;
+        var token = resp.data.token;
+        if (metodo === 'DELETE') {
+          var separador = url.indexOf('?') >= 0 ? '&' : '?';
+          return api(url + separador + '_csrf=' + encodeURIComponent(token), {
+            method: metodo,
+            credentials: 'same-origin',
+            headers: { 'X-CSRF-Token': token },
+          });
+        }
+        return api(url, {
+          method: metodo,
+          credentials: 'same-origin',
+          headers: headersConCsrf(token),
+          body: JSON.stringify(Object.assign({}, cuerpo, { _csrf: token })),
+        });
       });
-    });
-  }
-
-  function deleteConCsrf(url) {
-    return obtenerCsrf().then(function (token) {
-      var sep = url.indexOf('?') >= 0 ? '&' : '?';
-      return api(url + sep + '_csrf=' + encodeURIComponent(token), {
-        method: 'DELETE',
-        credentials: 'same-origin',
-        headers: { 'X-CSRF-Token': token },
-      });
-    });
+    }, recibir);
   }
 
   function feedback(el, mensaje, ok) {
     el.className = 'form-feedback ' + (ok ? 'is-ok' : 'is-error');
-    el.innerHTML = mensaje;
+    el.textContent = mensaje;
   }
 
   /* ------------------------------------------------------------------ login */
   function iniciarSesion(evento) {
     evento.preventDefault();
-    var caja = $('#login-feedback');
-    caja.className = 'form-feedback';
+    var boton = evento.currentTarget.querySelector('button[type="submit"]');
+    if (usuario || boton.disabled) return;
 
-    postJSON('/auth/login', {
-      username: $('#login-usuario').value,
-      password: $('#login-password').value,
+    var caja = $('#login-feedback');
+    var campoPassword = $('#login-password');
+    var credenciales = { username: $('#login-usuario').value, password: campoPassword.value };
+    campoPassword.value = '';
+    caja.className = 'form-feedback';
+    caja.textContent = '';
+    boton.disabled = true;
+
+    api('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(credenciales),
     }).then(function (resp) {
       if (!resp.ok) {
-        // FALLA (XSS reflejado): el mensaje del servidor (que incluye el
-        // usuario enviado) se pinta con innerHTML.
         feedback(caja, 'No pudimos iniciar sesión: ' + (resp.data.error || 'error desconocido'), false);
         return;
       }
       csrfToken = null;
       usuario = resp.data.usuario;
       mostrarPanel();
+    }).finally(function () {
+      boton.disabled = false;
     });
   }
 
   function cerrarSesion() {
-    postJSON('/auth/logout', {}).then(function () {
-      csrfToken = null;
-      usuario = null;
-      $('#vista-login').hidden = false;
-      $('#vista-panel').hidden = true;
-      $('#admin-user').innerHTML = '';
+    var boton = $('#btn-logout');
+    if (!usuario || boton.disabled) return;
+
+    var aviso = $('#logout-feedback');
+    aviso.hidden = true;
+    boton.disabled = true;
+
+    function mostrarError(resp) {
+      feedback(aviso, 'No pudimos cerrar sesión: ' + (resp.data.error || 'error desconocido'), false);
+      aviso.hidden = false;
+    }
+
+    escribirPanel('POST', '/auth/logout', {}, function (resp) {
+      if (resp.ok) {
+        volverAlLogin('Sesión cerrada.', true);
+        return;
+      }
+      if (resp.status === 403) {
+        // CSRF puede rechazar el logout antes de que se compruebe la sesión.
+        return conSesion(consultarSesion, function () { mostrarError(resp); });
+      }
+      mostrarError(resp);
+    }).finally(function () {
+      boton.disabled = false;
     });
   }
 
+  function volverAlLogin(mensaje, ok) {
+    usuario = null;
+    csrfToken = null;
+    productosCache = {};
+    $('#vista-panel').hidden = true;
+    $('#admin-user').replaceChildren();
+    $('#panel-bienvenida').textContent = 'Panel';
+    seleccionarTab(null);
+    $$('#vista-panel table, #vista-panel .kpi-grid').forEach(function (el) { el.replaceChildren(); });
+    $$('#vista-panel form').forEach(function (formulario) { formulario.reset(); });
+    $$('#vista-panel .form-feedback, #vista-panel .output').forEach(function (el) { el.textContent = ''; });
+    $('#login-password').value = '';
+    $('#vista-login').hidden = false;
+    feedback($('#login-feedback'), mensaje, ok);
+    $('#login-usuario').focus();
+  }
+
   function mostrarPanel() {
+    var avisoLogout = nodoTexto('p', '', 'form-feedback');
+    avisoLogout.id = 'logout-feedback';
+    avisoLogout.setAttribute('role', 'status');
+    avisoLogout.hidden = true;
+
+    seleccionarTab('resumen');
     $('#vista-login').hidden = true;
     $('#vista-panel').hidden = false;
-    $('#admin-user').innerHTML =
-      'Sesión de <strong>' + raw(usuario.nombre) + '</strong> · rol: <strong>' + raw(usuario.rol) + '</strong>';
+    $('#admin-user').replaceChildren(
+      'Sesión de ', nodoTexto('strong', usuario.nombre),
+      ' · rol: ', nodoTexto('strong', usuario.rol), avisoLogout
+    );
     $('#panel-bienvenida').textContent = 'Hola, ' + usuario.nombre;
     cargarTodo();
   }
@@ -159,17 +226,30 @@
   }
 
   /* ---------------------------------------------------------------- resumen */
+  function mostrarKpis(contenedor, kpis) {
+    contenedor.replaceChildren();
+    kpis.forEach(function (kpi) {
+      var tarjeta = document.createElement('div');
+      tarjeta.className = 'kpi';
+      tarjeta.append(
+        nodoTexto('div', kpi.label, 'kpi-label'),
+        nodoTexto('div', kpi.value, 'kpi-value')
+      );
+      contenedor.append(tarjeta);
+    });
+  }
+
   function cargarResumen() {
-    api('/reportes/facturacion').then(function (f) {
-      api('/reportes/mas-vendido').then(function (m) {
-        api('/reportes/cantidad-vendida').then(function (c) {
+    leerPanel('/reportes/facturacion', function (f) {
+      leerPanel('/reportes/mas-vendido', function (m) {
+        leerPanel('/reportes/cantidad-vendida', function (c) {
           var mas = m.data.producto;
           var kpis = [
             { label: 'Facturación total', value: money(f.data.facturado) },
             { label: 'Pedidos registrados', value: f.data.pedidos },
             {
               label: 'Producto más vendido',
-              value: mas ? raw(mas.nombre) : '—',
+              value: mas ? mas.nombre : '—',
             },
             {
               label: 'Unidades por tipo',
@@ -179,48 +259,49 @@
             },
           ];
 
-          $('#kpis').innerHTML = kpis.map(function (k) {
-            return '<div class="kpi"><div class="kpi-label">' + raw(k.label) + '</div>' +
-              '<div class="kpi-value">' + raw(k.value) + '</div></div>';
-          }).join('');
+          mostrarKpis($('#kpis'), kpis);
         });
       });
     });
   }
 
   /* --------------------------------------------------------------- pedidos */
-  function tablaPedidos(filas, conAcciones) {
-    if (!filas || filas.length === 0) return '<p class="empty">No hay pedidos.</p>';
+  function mostrarPedidos(tabla, filas, conAcciones) {
+    var titulos = ['#', 'Mesa', 'Cliente', 'Estado', 'Total', 'Fecha'];
+    if (conAcciones) titulos.push('Acciones');
+    if (filas.length === 0) {
+      tabla.replaceChildren();
+      var celda = tabla.createTBody().insertRow().insertCell();
+      celda.colSpan = titulos.length;
+      celda.append(nodoTexto('p', 'No hay pedidos.', 'empty'));
+      return;
+    }
 
-    var html = '<thead><tr><th>#</th><th>Mesa</th><th>Cliente</th><th>Estado</th>' +
-      '<th class="num">Total</th><th>Fecha</th>' + (conAcciones ? '<th>Acciones</th>' : '') + '</tr></thead><tbody>';
-
+    var cuerpo = prepararTabla(tabla, titulos, [4]);
+    var estados = ['abierto', 'preparando', 'listo', 'entregado'];
     filas.forEach(function (p) {
-      html += '<tr>' +
-        '<td>' + raw(p.id) + '</td>' +
-        '<td>' + raw(p.mesa) + '</td>' +
-        '<td>' + raw(p.cliente) + '</td>' +
-        '<td><span class="badge badge-' + raw(p.estado) + '">' + raw(p.estado) + '</span></td>' +
-        '<td class="num">' + money(p.total) + '</td>' +
-        '<td>' + new Date(p.creado_en).toLocaleString('es-AR') + '</td>' +
-        (conAcciones
-          ? '<td><select data-pedido="' + raw(p.id) + '" class="sel-estado">' +
-            ['abierto', 'preparando', 'listo', 'entregado'].map(function (e) {
-              return '<option value="' + e + '"' + (e === p.estado ? ' selected' : '') + '>' + e + '</option>';
-            }).join('') +
-            '</select></td>'
-          : '') +
-        '</tr>';
+      var fila = cuerpo.insertRow();
+      fila.append(nodoTexto('td', p.id), nodoTexto('td', p.mesa), nodoTexto('td', p.cliente));
+      var estado = nodoTexto('span', p.estado, 'badge');
+      if (estados.includes(p.estado)) estado.classList.add('badge-' + p.estado);
+      fila.insertCell().append(estado);
+      fila.append(
+        nodoTexto('td', money(p.total), 'num'),
+        nodoTexto('td', new Date(p.creado_en).toLocaleString('es-AR'))
+      );
+      if (conAcciones) {
+        var select = crearSelector('sel-estado', estados, p.estado);
+        select.dataset.pedido = p.id ?? '';
+        fila.insertCell().append(select);
+      }
     });
-
-    return html + '</tbody>';
   }
 
   function cargarPedidos() {
-    api('/pedidos').then(function (resp) {
+    leerPanel('/pedidos', function (resp) {
       var pedidos = resp.data.pedidos || [];
-      $('#tabla-pedidos').innerHTML = tablaPedidos(pedidos, true);
-      $('#tabla-ultimos').innerHTML = tablaPedidos(pedidos.slice(0, 5), false);
+      mostrarPedidos($('#tabla-pedidos'), pedidos, true);
+      mostrarPedidos($('#tabla-ultimos'), pedidos.slice(0, 5), false);
     });
   }
 
@@ -228,7 +309,7 @@
     var select = evento.target.closest('.sel-estado');
     if (!select) return;
     var id = select.getAttribute('data-pedido');
-    patchJSON('/pedidos/' + id + '/estado', { estado: select.value }).then(function (resp) {
+    escribirPanel('PATCH', '/pedidos/' + id + '/estado', { estado: select.value }, function (resp) {
       if (!resp.ok) {
         alert('No se pudo cambiar el estado: ' + (resp.data.error || 'error'));
       }
@@ -238,25 +319,25 @@
 
   /* ------------------------------------------------------------- productos */
   function cargarProductos() {
-    api('/productos').then(function (resp) {
+    leerPanel('/productos', function (resp) {
       var productos = resp.data.productos || [];
       productosCache = {};
-      var html = '<thead><tr><th>#</th><th>Nombre</th><th>Tipo</th><th>Origen</th>' +
-        '<th class="num">Precio</th><th>Acciones</th></tr></thead><tbody>';
+      var cuerpo = prepararTabla($('#tabla-productos'), ['#', 'Nombre', 'Tipo', 'Origen', 'Precio', 'Acciones'], [4]);
 
       productos.forEach(function (p) {
         productosCache[p.id] = p;
-        html += '<tr>' +
-          '<td>' + raw(p.id) + '</td>' +
-          '<td>' + raw(p.nombre) + '</td>' +
-          '<td>' + raw(p.tipo) + '</td>' +
-          '<td>' + raw(p.variedad || '—') + '</td>' +
-          '<td class="num">' + money(p.precio) + '</td>' +
-          '<td><button class="link-danger" data-borrar="' + raw(p.id) + '">Borrar</button></td>' +
-          '</tr>';
+        var fila = cuerpo.insertRow();
+        fila.append(
+          nodoTexto('td', p.id),
+          nodoTexto('td', p.nombre),
+          nodoTexto('td', p.tipo),
+          nodoTexto('td', p.variedad || '—'),
+          nodoTexto('td', money(p.precio), 'num')
+        );
+        var borrar = nodoTexto('button', 'Borrar', 'link-danger');
+        borrar.dataset.borrar = p.id ?? '';
+        fila.insertCell().append(borrar);
       });
-
-      $('#tabla-productos').innerHTML = html + '</tbody>';
     });
   }
 
@@ -276,9 +357,9 @@
       descripcion: $('#p-descripcion').value,
     };
 
-    var peticion = id ? putJSON('/admin/productos/' + id, cuerpo) : postJSON('/admin/productos', cuerpo);
+    var url = id ? '/admin/productos/' + id : '/admin/productos';
 
-    peticion.then(function (resp) {
+    escribirPanel(id ? 'PUT' : 'POST', url, cuerpo, function (resp) {
       if (!resp.ok) {
         feedback(caja, 'No se pudo guardar: ' + (resp.data.error || 'error desconocido'), false);
         return;
@@ -296,7 +377,7 @@
     var id = btn.getAttribute('data-borrar');
     if (!confirm('¿Borrar el producto #' + id + '?')) return;
 
-    deleteConCsrf('/admin/productos/' + id).then(function (resp) {
+    escribirPanel('DELETE', '/admin/productos/' + id, null, function (resp) {
       if (!resp.ok) alert('No se pudo borrar: ' + (resp.data.error || 'error'));
       cargarProductos();
     });
@@ -310,6 +391,9 @@
   /* ---------------------------------------------------------------- upload */
   function subirArchivo(evento) {
     evento.preventDefault();
+    var contexto = usuario;
+    if (!contexto) return;
+
     var caja = $('#upload-feedback');
     var input = $('#archivo-subida');
     if (!input.files || !input.files[0]) {
@@ -321,11 +405,12 @@
     var lector = new FileReader();
 
     lector.onload = function () {
+      if (usuario !== contexto) return;
       var base64 = String(lector.result).split(',')[1] || '';
-      postJSON('/admin/subir-archivo', {
+      escribirPanel('POST', '/admin/subir-archivo', {
         nombre: archivo.name,
         contenidoBase64: base64,
-      }).then(function (resp) {
+      }, function (resp) {
         if (!resp.ok) {
           feedback(caja, 'No se pudo subir: ' + (resp.data.error || 'error desconocido'), false);
           return;
@@ -339,20 +424,17 @@
 
   /* -------------------------------------------------------------- reportes */
   function cargarReportes() {
-    api('/reportes/facturacion').then(function (f) {
-      api('/reportes/ticket-promedio').then(function (t) {
-        api('/reportes/mas-vendido').then(function (m) {
+    leerPanel('/reportes/facturacion', function (f) {
+      leerPanel('/reportes/ticket-promedio', function (t) {
+        leerPanel('/reportes/mas-vendido', function (m) {
           var mas = m.data.producto;
           var kpis = [
             { label: 'Facturación', value: money(f.data.facturado) },
             { label: 'Pedidos', value: f.data.pedidos },
             { label: 'Ticket promedio', value: money(t.data.promedio) },
-            { label: 'Más vendido', value: mas ? raw(mas.nombre) + ' (' + raw(mas.unidades) + ')' : '—' },
+            { label: 'Más vendido', value: mas ? (mas.nombre ?? '') + ' (' + (mas.unidades ?? '') + ')' : '—' },
           ];
-          $('#kpis-reportes').innerHTML = kpis.map(function (k) {
-            return '<div class="kpi"><div class="kpi-label">' + raw(k.label) + '</div>' +
-              '<div class="kpi-value">' + raw(k.value) + '</div></div>';
-          }).join('');
+          mostrarKpis($('#kpis-reportes'), kpis);
         });
       });
     });
@@ -360,45 +442,43 @@
 
   function consultarVentas() {
     var caja = $('#reporte-feedback');
+    var tabla = $('#tabla-ventas');
     var variedad = $('#reporte-variedad').value;
 
-    api('/reportes/ventas-por-variedad?variedad=' + encodeURIComponent(variedad)).then(function (resp) {
+    leerPanel('/reportes/ventas-por-variedad?variedad=' + encodeURIComponent(variedad), function (resp) {
       if (!resp.ok) {
         feedback(caja, 'Error: ' + (resp.data.error || 'desconocido'), false);
-        $('#tabla-ventas').innerHTML = '';
+        tabla.replaceChildren();
         return;
       }
       var ventas = resp.data.ventas || [];
-      var html = '<thead><tr><th>Origen</th><th>Producto</th><th class="num">Unidades</th>' +
-        '<th class="num">Total</th></tr></thead><tbody>';
+      var cuerpo = prepararTabla(tabla, ['Origen', 'Producto', 'Unidades', 'Total'], [2, 3]);
       ventas.forEach(function (v) {
-        html += '<tr><td>' + raw(v.variedad) + '</td><td>' + raw(v.nombre) + '</td>' +
-          '<td class="num">' + raw(v.unidades) + '</td><td class="num">' + money(v.total) + '</td></tr>';
+        cuerpo.insertRow().append(
+          nodoTexto('td', v.variedad),
+          nodoTexto('td', v.nombre),
+          nodoTexto('td', v.unidades, 'num'),
+          nodoTexto('td', money(v.total), 'num')
+        );
       });
-      $('#tabla-ventas').innerHTML = html + '</tbody>';
       feedback(caja, 'Consulta realizada.', true);
     });
   }
 
   /* -------------------------------------------------------------- usuarios */
   function cargarUsuarios() {
-    api('/admin/usuarios').then(function (resp) {
+    leerPanel('/admin/usuarios', function (resp) {
       var usuarios = resp.data.usuarios || [];
-      var html = '<thead><tr><th>#</th><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Acciones</th></tr></thead><tbody>';
+      var cuerpo = prepararTabla($('#tabla-usuarios'), ['#', 'Usuario', 'Nombre', 'Rol', 'Acciones']);
+      var roles = ['cliente', 'mozo', 'barista', 'admin'];
       usuarios.forEach(function (u) {
-        html += '<tr>' +
-          '<td>' + raw(u.id) + '</td>' +
-          '<td>' + raw(u.username) + '</td>' +
-          '<td>' + raw(u.nombre) + '</td>' +
-          '<td><span class="badge' + (u.rol === 'admin' ? ' badge-admin' : '') + '">' + raw(u.rol) + '</span></td>' +
-          '<td><select data-usuario="' + raw(u.id) + '" class="sel-rol">' +
-            ['cliente', 'mozo', 'barista', 'admin'].map(function (r) {
-              return '<option value="' + r + '"' + (r === u.rol ? ' selected' : '') + '>' + r + '</option>';
-            }).join('') +
-            '</select></td>' +
-          '</tr>';
+        var fila = cuerpo.insertRow();
+        fila.append(nodoTexto('td', u.id), nodoTexto('td', u.username), nodoTexto('td', u.nombre));
+        fila.insertCell().append(nodoTexto('span', u.rol, u.rol === 'admin' ? 'badge badge-admin' : 'badge'));
+        var select = crearSelector('sel-rol', roles, u.rol);
+        select.dataset.usuario = u.id ?? '';
+        fila.insertCell().append(select);
       });
-      $('#tabla-usuarios').innerHTML = html + '</tbody>';
     });
   }
 
@@ -407,7 +487,7 @@
     if (!select) return;
     var id = select.getAttribute('data-usuario');
 
-    putJSON('/admin/usuarios/' + id, { rol: select.value }).then(function (resp) {
+    escribirPanel('PUT', '/admin/usuarios/' + id, { rol: select.value }, function (resp) {
       if (!resp.ok) alert('No se pudo actualizar: ' + (resp.data.error || 'error'));
       cargarUsuarios();
     });
@@ -416,13 +496,15 @@
   function cambiarPassword(evento) {
     evento.preventDefault();
     var caja = $('#password-feedback');
-    postJSON('/admin/cambiar-contrasena', { nueva: $('#nueva-password').value }).then(function (resp) {
+    var campo = $('#nueva-password');
+    var nueva = campo.value;
+    campo.value = '';
+    escribirPanel('POST', '/admin/cambiar-contrasena', { nueva: nueva }, function (resp) {
       if (!resp.ok) {
         feedback(caja, 'No se pudo cambiar: ' + (resp.data.error || 'error desconocido'), false);
         return;
       }
-      feedback(caja, 'Contraseña actualizada.', true);
-      $('#nueva-password').value = '';
+      volverAlLogin('Contraseña actualizada. Volvé a iniciar sesión.', true);
     });
   }
 
@@ -432,7 +514,7 @@
     var salida = $('#salida-conexion');
     salida.textContent = 'Probando…';
 
-    postJSON('/admin/probar-conexion', { host: $('#conexion-host').value }).then(function (resp) {
+    escribirPanel('POST', '/admin/probar-conexion', { host: $('#conexion-host').value }, function (resp) {
       if (!resp.ok) {
         salida.textContent = 'Error: ' + (resp.data.error || 'desconocido');
         return;
@@ -447,33 +529,32 @@
   function verDiagnostico() {
     var salida = $('#salida-diagnostico');
     salida.textContent = 'Cargando…';
-    api('/_diagnostico').then(function (resp) {
+    leerPanel('/_diagnostico', function (resp) {
       salida.textContent = JSON.stringify(resp.data, null, 2);
     });
   }
 
   /* ------------------------------------------------------------------ tabs */
-  function activarTab(evento) {
-    var tab = evento.target.closest('.tab');
-    if (!tab) return;
-    var vista = tab.getAttribute('data-vista');
-    $$('.tab').forEach(function (t) { t.classList.remove('is-active'); });
-    tab.classList.add('is-active');
+  function seleccionarTab(vista) {
+    $$('.tab').forEach(function (t) {
+      t.classList.toggle('is-active', t.getAttribute('data-vista') === vista);
+    });
     $$('.tab-panel').forEach(function (p) {
       p.classList.toggle('is-active', p.getAttribute('data-panel') === vista);
     });
   }
 
+  function activarTab(evento) {
+    var tab = evento.target.closest('.tab');
+    if (usuario && tab) seleccionarTab(tab.getAttribute('data-vista'));
+  }
+
   /* ------------------------------------------------------------------ init */
   function init() {
-    // FALLA (XSS de DOM): se lee un parámetro de la URL y se inyecta con
-    // innerHTML. Al abrir admin.html?vista=<script>...</script> se ejecuta
-    // código en el navegador del admin.
     var params = new URLSearchParams(window.location.search);
     var objetivo = params.get('vista');
     if (objetivo) {
-      // Se sanitiza el objeto
-      $('#panel-bienvenida').innerHTML = DOMPurify.sanitize('Panel ' + objetivo);
+      $('#panel-bienvenida').textContent = 'Panel ' + objetivo;
     }
 
     $('#form-login').addEventListener('submit', iniciarSesion);
@@ -492,8 +573,8 @@
     $('#btn-diagnostico').addEventListener('click', verDiagnostico);
 
     // ¿Ya hay sesión?
-    api('/auth/yo').then(function (resp) {
-      if (resp.ok) {
+    consultarSesion().then(function (resp) {
+      if (resp.ok && !usuario && !$('#form-login button[type="submit"]').disabled) {
         usuario = resp.data.usuario;
         mostrarPanel();
       }

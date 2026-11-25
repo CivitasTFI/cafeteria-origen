@@ -1,5 +1,6 @@
+import { randomBytes } from 'node:crypto';
 import * as db from '../db';
-import type { Usuario } from '../tipos';
+import type { Usuario, UsuarioSesion } from '../tipos';
 import * as bcrypt from 'bcryptjs';
 import { revocarSesionesUsuario } from '../middleware/sesion';
 import { revocarCsrfSesion } from '../middleware/csrf';
@@ -27,9 +28,39 @@ import { revocarCsrfSesion } from '../middleware/csrf';
  */
 
 const COSTO_HASH = 10;
+const MAX_BYTES_CONTRASENA_BCRYPT = 72;
+// Permite ejecutar bcrypt también cuando no hay una cuenta, con el costo del servicio.
+const HASH_DE_REFERENCIA = bcrypt.hashSync(randomBytes(32).toString('hex'), COSTO_HASH);
+const operacionesPorUsuario = new Map<number, Promise<void>>();
 export type UsuarioPublico = Omit<Usuario, 'password'>;
+
+// Las escrituras y la emisión de sesiones de un usuario comparten este turno en el proceso.
+async function serializarPorUsuario<T>(id: number | string, operar: () => Promise<T>): Promise<T> {
+  const clave = Number(id);
+  const anterior = operacionesPorUsuario.get(clave);
+  let liberar!: () => void;
+  const turno = new Promise<void>((resolver) => { liberar = resolver; });
+  operacionesPorUsuario.set(clave, turno);
+
+  try {
+    await anterior;
+    return await operar();
+  } finally {
+    liberar();
+    if (operacionesPorUsuario.get(clave) === turno) operacionesPorUsuario.delete(clave);
+  }
+}
+
+export function esFormatoPasswordValido(password: unknown): password is string {
+  return typeof password === 'string' && password.trim().length > 0 && !password.includes('\0');
+}
+
+export function excedeLimitePassword(password: string): boolean {
+  return Buffer.byteLength(password, 'utf8') > MAX_BYTES_CONTRASENA_BCRYPT;
+}
+
 /** Genera un hash bcrypt para una contraseña en texto plano. */
-export async function hashearPassword(password: string): Promise<string> {
+export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, COSTO_HASH);
 }
 
@@ -52,23 +83,33 @@ export async function buscarPorUsername(username: string): Promise<Usuario | nul
 }
 
 /**
- * Autentica a un usuario comparando usuario y contraseña.
- * Devuelve el usuario o null.
+ * Verifica la contraseña y emite la sesión dentro del turno del usuario.
+ * emitirSesion debe registrar la sesión de forma síncrona.
  */
-export async function autenticar(username: string, password: string): Promise<Usuario | null> {
+export async function autenticar(
+  username: string,
+  password: string,
+  emitirSesion: (usuario: UsuarioSesion) => void
+): Promise<UsuarioSesion | null> {
   const usuario = await buscarPorUsername(username);
+  const hash = usuario ? usuario.password : HASH_DE_REFERENCIA;
+  const passwordValida = await bcrypt.compare(password, hash);
 
-  if (!usuario) {
+  if (!usuario || !passwordValida) {
     return null;
   }
 
-  const passwordValida = await bcrypt.compare(password, usuario.password);
+  return serializarPorUsuario(usuario.id, async () => {
+    const vigente = await buscarPorUsername(username);
+    if (!vigente || vigente.id !== usuario.id || vigente.password !== usuario.password) {
+      return null;
+    }
 
-  if (!passwordValida) {
-    return null;
-  }
-
-  return usuario;
+    const { id, rol, nombre } = vigente;
+    const usuarioSesion = { id, username: vigente.username, rol, nombre };
+    emitirSesion(usuarioSesion);
+    return usuarioSesion;
+  });
 }
 
 /** Lista todos los usuarios (para el panel de administración). */
@@ -105,7 +146,7 @@ export async function actualizar(id: number | string, cambios: Partial<Usuario>)
     let valorFinal = valor;
 
     if (campo === 'password' && typeof valor === 'string') {
-      valorFinal = await hashearPassword(valor);
+      valorFinal = await hashPassword(valor);
     }
 
     campos.push(`${campo} = $${valores.length + 1}`);
@@ -114,53 +155,40 @@ export async function actualizar(id: number | string, cambios: Partial<Usuario>)
 
   if (campos.length === 0) return null;
 
-  const rolAnterior = typeof cambios.rol === 'string'
-    ? await db.query<{ rol: string }>(
-        'SELECT rol FROM usuarios WHERE id = $1',
-        [id]
-      )
-    : null;
-
   valores.push(id);
 
-  const { rows } = await db.query<UsuarioPublico>(
-    `UPDATE usuarios SET ${campos.join(', ')} WHERE id = $${valores.length} RETURNING id, username, rol, nombre, creado_en`,
-    valores
-  );
+  return serializarPorUsuario(id, async () => {
+    const incluyeRol = typeof cambios.rol === 'string';
+    const rolAnterior = incluyeRol
+      ? (await db.query<Pick<Usuario, 'rol'>>('SELECT rol FROM usuarios WHERE id = $1', [id])).rows[0]?.rol
+      : undefined;
 
-  const usuarioActualizado = rows[0] || null;
+    const { rows: [actualizado] } = await db.query<UsuarioPublico>(
+      `UPDATE usuarios SET ${campos.join(', ')} WHERE id = $${valores.length} RETURNING id, username, rol, nombre, creado_en`,
+      valores
+    );
+    if (!actualizado) return null;
 
-  if (usuarioActualizado) {
-    const cambioPassword = typeof cambios.password === 'string';
-    const cambioRol =
-      typeof cambios.rol === 'string' &&
-      rolAnterior?.rows[0]?.rol !== cambios.rol;
-
-    if (cambioPassword || cambioRol) {
-      revocarAccesosUsuario(id);
+    const cambioRol = incluyeRol && actualizado.rol !== rolAnterior;
+    if (typeof cambios.password === 'string' || cambioRol) {
+      revocarAccesosUsuario(actualizado.id);
     }
-  }
-
-  return usuarioActualizado;
+    return actualizado;
+  });
 }
 
 export async function cambiarPassword(id: number, nuevaPassword: string): Promise<UsuarioPublico | null> {
-  const passwordHash = await hashearPassword(nuevaPassword);
+  const passwordHash = await hashPassword(nuevaPassword);
 
-  const { rows } = await db.query<UsuarioPublico>(
-    `UPDATE usuarios
-      SET password = $1
-      WHERE id = $2
-      RETURNING id, username, rol, nombre, creado_en`,
-    [passwordHash, id]
-  );
-
-    const usuarioActualizado = rows[0] || null;
-
-  if (usuarioActualizado) {
-    revocarAccesosUsuario(id);
-  }
-
-  return usuarioActualizado;
-
+  return serializarPorUsuario(id, async () => {
+    const { rows: [actualizado] } = await db.query<UsuarioPublico>(
+      `UPDATE usuarios
+        SET password = $1
+        WHERE id = $2
+        RETURNING id, username, rol, nombre, creado_en`,
+      [passwordHash, id]
+    );
+    if (actualizado) revocarAccesosUsuario(actualizado.id);
+    return actualizado ?? null;
+  });
 }

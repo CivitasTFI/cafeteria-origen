@@ -3,30 +3,20 @@ import type { Comentario } from '../tipos';
 
 /** Datos de una reseña nueva, tal como llegan en el cuerpo de la petición. */
 export interface NuevoComentario {
-  autor: string;
-  texto: string;
-  calificacion: number;
+  autor: unknown;
+  texto: unknown;
+  calificacion: unknown;
 }
 
-/**
- * Servicio de comentarios / reseñas de la cafetería.
- *
- * -----------------------------------------------------------------------------
- * FALLA — Validación de entrada débil (OWASP A04:2021)
- * -----------------------------------------------------------------------------
- * No se valida longitud, ni formato, ni que la calificación esté en rango.
- *
- * -----------------------------------------------------------------------------
- * FALLA — Cross-Site Scripting almacenado (OWASP A03:2021)
- * -----------------------------------------------------------------------------
- * El texto del comentario se guarda tal cual y luego se devuelve en las
- * respuestas JSON que la web inserta en el DOM. Como el cliente lo pinta con
- * innerHTML, el script queda almacenado en la base y se ejecuta en el
- * navegador de CADA visitante (incluidos los administradores).
- *
- * Corrección: escapar/sanear la salida en el cliente (textContent en vez de
- * innerHTML) o, mejor, sanitizar en el servidor y aplicar CSP como capa extra.
- */
+const MAX_AUTOR = 40;
+const MAX_TEXTO = 280;
+
+function esTextoValido(valor: unknown, maximo: number): valor is string {
+  return typeof valor === 'string' &&
+    valor.length <= maximo &&
+    valor.trim().length > 0 &&
+    !valor.includes('\0');
+}
 
 /** Lista todos los comentarios, del más nuevo al más viejo. */
 export async function listar(): Promise<Comentario[]> {
@@ -38,7 +28,16 @@ export async function listar(): Promise<Comentario[]> {
 
 /** Crea un comentario. */
 export async function crear({ autor, texto, calificacion }: NuevoComentario): Promise<Comentario> {
-  // FALLA: sin validación de longitud ni de rango de calificación.
+  if (!esTextoValido(autor, MAX_AUTOR)) {
+    throw Object.assign(new Error('Autor de reseña inválido.'), { status: 400 });
+  }
+  if (!esTextoValido(texto, MAX_TEXTO)) {
+    throw Object.assign(new Error('Texto de reseña inválido.'), { status: 400 });
+  }
+  if (typeof calificacion !== 'number' || !Number.isInteger(calificacion) || calificacion < 1 || calificacion > 5) {
+    throw Object.assign(new Error('La calificación debe ser un entero entre 1 y 5.'), { status: 400 });
+  }
+
   const { rows } = await db.query<Comentario>(
     `INSERT INTO comentarios (autor, texto, calificacion)
      VALUES ($1, $2, $3)

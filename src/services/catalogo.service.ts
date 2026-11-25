@@ -58,11 +58,9 @@ export async function listar(filtros: FiltrosCatalogo = {}): Promise<ProductoCon
     sql+= ` AND variedad = $${parametros.length}`;
   }
   if (q){
-    parametros.push(q);
-    // Crea el marcador y el patrón SQL
-    const marcador = '$' + parametros.length;
-    const patronSql = `('%' || ${marcador} || '%')`;
-    sql+= ` AND (nombre ILIKE ${patronSql} OR descripcion ILIKE ${patronSql})`;
+    parametros.push(`%${q}%`);
+    const posicion = parametros.length;
+    sql += ` AND (nombre ILIKE $${posicion} OR descripcion ILIKE $${posicion})`;
   }
 
   sql += ' ORDER BY tipo, variedad NULLS FIRST, id';
