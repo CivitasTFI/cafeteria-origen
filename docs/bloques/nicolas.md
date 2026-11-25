@@ -138,10 +138,10 @@ Las advertencias sobre contraseñas de práctica triviales se registran como rie
 - [ ] Contratos con Matías/Homero respetados y ediciones compartidas coordinadas.
 - [x] Hashing/comparación centralizados y respuestas sin credenciales derivadas.
 - [x] Seed y transición idempotentes preparados y aplicados sólo con autorización.
-- [ ] Login parametrizado y errores uniformes.
+- [x] Login parametrizado y errores uniformes.
 - [ ] Excepción JSON de login y controles de origen verificados localmente.
-- [ ] Cookies, ID aleatorio y vencimiento absoluto implementados y comprobados.
-- [ ] Logout y revocación por contraseña/rol integrados.
+- [x] Cookies, ID aleatorio y vencimiento absoluto implementados y comprobados.
+- [x] Logout y revocación por contraseña/rol integrados.
 - [x] Limitador verificado dentro de diez solicitudes sin penalizar éxitos.
-- [ ] Baterías originales y casos legítimos autorizados registrados.
+- [x] Baterías originales y casos legítimos autorizados registrados.
 - [ ] PR hacia `develop` revisado con evidencia y reflexión por falla.

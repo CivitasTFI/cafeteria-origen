@@ -1,7 +1,7 @@
 import express from 'express';
 import * as usuarios from '../services/usuarios.service';
 import { revocarCsrfSesion } from '../middleware/csrf';
-import { crearSesion, destruirSesion, leerCookies, obtenerSesion } from '../middleware/sesion';
+import { crearSesion, destruirSesion, leerCookies, obtenerSesion, limpiarCookieSesion } from '../middleware/sesion';
 import { rateLimit } from 'express-rate-limit';
 
 const router = express.Router();
@@ -71,17 +71,12 @@ router.post('/login', limitarLogin, async (req, res, next) => {
   }
 });
 
-/**
- * Cierre de sesión.
- *
- * FALLA: sólo borra la cookie del navegador. La sesión sigue existiendo en el
- * servidor, así que con la cookie robada se puede seguir usando.
- */
+
 router.post('/logout', (req, res) => {
   const sid = leerCookies(req).sid;
   if (sid) revocarCsrfSesion(sid);
   destruirSesion(req);
-  res.clearCookie('sid', { path: '/' });
+  limpiarCookieSesion(res);
   res.json({ mensaje: 'Sesión cerrada.' });
 });
 
