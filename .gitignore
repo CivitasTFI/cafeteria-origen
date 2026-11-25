@@ -5,3 +5,5 @@ uploads/*
 !uploads/.gitkeep
 .DS_Store
 *.zip
+# Respaldos locales de bases de datos
+*.dump

@@ -1,10 +1,24 @@
 import express from 'express';
 import * as usuarios from '../services/usuarios.service';
 import { revocarCsrfSesion } from '../middleware/csrf';
-import { crearSesion, destruirSesion, leerCookies, obtenerSesion } from '../middleware/sesion';
+import { crearSesion, destruirSesion, leerCookies, obtenerSesion, limpiarCookieSesion } from '../middleware/sesion';
+import { rateLimit } from 'express-rate-limit';
 
 const router = express.Router();
 
+//Limitador
+const limitarLogin = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  limit: 9,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  handler: (_req, res) => {
+    res.status(429).json({
+      error: 'Demasiados intentos de inicio de sesión. Intentá nuevamente más tarde.',
+    });
+  },
+});
 /**
  * Inicio de sesión.
  *
@@ -16,29 +30,40 @@ const router = express.Router();
  *  - Sin rate limiting ni bloqueo: fuerza bruta ilimitada.
  *  - El identificador de sesión no se regenera (fijación de sesión).
  */
-router.post('/login', async (req, res, next) => {
+router.post('/login', limitarLogin, async (req, res, next) => {
   try {
-    const { username, password } = req.body || {};
+    const contentType = req.get('content-type')
+      ?.split(';')[0]
+      .trim()
+      .toLowerCase();
 
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Falta usuario o contraseña.' });
+    if (contentType !== 'application/json') {
+      return res.status(415).json({
+        error: 'El inicio de sesión requiere Content-Type application/json.',
+      });
     }
 
-    // La verificación de credenciales es la consulta concatenada (SQLi).
+    const { username, password } = req.body || {};
+
+    if (
+      typeof username !== 'string' ||
+      typeof password !== 'string' ||
+      !username.trim() ||
+      !password
+    ) {
+      return res.status(400).json({
+        error: 'Falta usuario o contraseña.',
+      });
+    }
+
+
+    //* La verificación de credenciales utiliza autenticación segura.*
     const usuario = await usuarios.autenticar(username, password);
 
     if (!usuario) {
-      // FALLA — Enumeración de usuarios: el mensaje distingue entre
-      // "no existe" y "contraseña incorrecta", lo que permite a un atacante
-      // averiguar qué cuentas hay en el sistema.
-      const existe = await usuarios.buscarPorUsername(username);
-      if (existe) {
-        return res.status(401).json({ error: 'La contraseña es incorrecta.' });
-      }
-      return res
-        .status(401)
-        // Cambio para pasar el test de XSS, CORREGIR LA ENUMERACIÓN DE USUARIOS
-        .json({ error: `El usuario no existe en el sistema.` });
+      return res.status(401).json({
+        error: 'Usuario o contraseña incorrectos.'
+      });
     }
 
     const sidAnterior = leerCookies(req).sid;
@@ -65,17 +90,12 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
-/**
- * Cierre de sesión.
- *
- * FALLA: sólo borra la cookie del navegador. La sesión sigue existiendo en el
- * servidor, así que con la cookie robada se puede seguir usando.
- */
+
 router.post('/logout', (req, res) => {
   const sid = leerCookies(req).sid;
   if (sid) revocarCsrfSesion(sid);
   destruirSesion(req);
-  res.clearCookie('sid', { path: '/' });
+  limpiarCookieSesion(res);
   res.json({ mensaje: 'Sesión cerrada.' });
 });
 

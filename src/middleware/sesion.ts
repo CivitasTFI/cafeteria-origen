@@ -23,11 +23,30 @@
  */
 
 import type { Request, Response } from 'express';
-
+import  { randomBytes } from 'node:crypto';
 import type { Sesion, UsuarioSesion } from '../tipos';
+import config from '../config';
 
 export const sesiones = new Map<string, Sesion>();
-let contadorSesiones = 0;
+
+const DURACION_SESION = 8 * 60 * 60 * 1000;
+
+const opcionesCookieBase = {
+  httpOnly: true,
+  secure: config.nodeEnv === 'production',
+  sameSite: 'lax' as const,
+  path: '/',
+};
+
+const opcionesCookie = {
+  ...opcionesCookieBase,
+  maxAge: DURACION_SESION,
+};
+
+/** Elimina la cookie utilizando los mismos atributos de creación. */
+export function limpiarCookieSesion(res: Response): void {
+  res.clearCookie('sid', opcionesCookieBase);
+}
 
 /** Lee las cookies de la petición (parser mínimo, sin dependencias). */
 export function leerCookies(req: Request): Record<string, string> {
@@ -46,35 +65,62 @@ export function leerCookies(req: Request): Record<string, string> {
 
 /** Crea una sesión nueva para el usuario y setea la cookie. */
 export function crearSesion(req: Request, res: Response, usuario: UsuarioSesion): string {
-  contadorSesiones += 1;
+  // Revoca cualquier sesión anterior presentada por este navegador.
+  const idAnterior = leerCookies(req).sid;
+  if (idAnterior) sesiones.delete(idAnterior);
 
-  // FALLA: identificador predecible.
-  const id = `sesion_${contadorSesiones}`;
+  // Identificador criptográficamente aleatorio.
+  const id = randomBytes(32).toString('hex');
 
-  // FALLA: la sesión nunca expira.
+  const ahora = Date.now();
+
   sesiones.set(id, {
     usuario,
-    creadaEn: Date.now(),
-    expiraEn: null,
+    creadaEn: ahora,
+    expiraEn: ahora + DURACION_SESION,
   });
 
-  // FALLA: cookie sin httpOnly / secure / sameSite.
-  res.cookie('sid', id, { path: '/' });
+  res.cookie('sid', id, opcionesCookie);
 
   return id;
 }
 
 /** Devuelve la sesión de la petición, si existe. */
 export function obtenerSesion(req: Request): Sesion | null {
-  const cookies = leerCookies(req);
-  const id = cookies.sid;
+  const id = leerCookies(req).sid;
   if (!id) return null;
-  return sesiones.get(id) || null;
+
+  const sesion = sesiones.get(id);
+  if (!sesion) return null;
+
+  if (sesion.expiraEn !== null && Date.now() >= sesion.expiraEn) {
+    sesiones.delete(id);
+    return null;
+  }
+
+  return sesion;
 }
 
 /** Cierra la sesión en el servidor (debería llamarse en el logout). */
 export function destruirSesion(req: Request): void {
-  const cookies = leerCookies(req);
-  const id = cookies.sid;
+  //const cookies = leerCookies(req);
+  const id = leerCookies(req).sid;
   if (id) sesiones.delete(id);
+}
+
+/**
+ * Revoca todas las sesiones activas de un usuario.
+ * Devuelve los IDs eliminados para revocar sus tokens CSRF.
+ */
+export function revocarSesionesUsuario(idUsuario: number | string): string[] {
+  const idsRevocados: string[] = [];
+
+  for (const [idSesion, sesion] of sesiones.entries()) {
+    if (String(sesion.usuario.id) === String(idUsuario)) {
+      sesiones.delete(idSesion);
+      idsRevocados.push(idSesion);
+    }
+  }
+
+  return idsRevocados;
 }
