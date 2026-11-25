@@ -269,29 +269,44 @@
   }
 
   /* --------------------------------------------------------------- reseñas */
+  var MAX_AUTOR_RESENA = 40;
+  var MAX_TEXTO_RESENA = 280;
+
+  function elementoReseña(etiqueta, clase, texto = '') {
+    var nodo = document.createElement(etiqueta);
+    nodo.className = clase;
+    nodo.textContent = texto;
+    return nodo;
+  }
+
   function cargarReseñas() {
     return api('/comentarios').then(function (resp) {
       var cont = $('#lista-resenas');
-      if (!resp.ok || !resp.data.comentarios || resp.data.comentarios.length === 0) {
-        cont.innerHTML = '<p class="empty">Todavía no hay reseñas. ¡Sé el primero!</p>';
+      var comentarios = resp.data.comentarios;
+      if (!resp.ok || !Array.isArray(comentarios) || comentarios.length === 0) {
+        cont.replaceChildren(elementoReseña('p', 'empty', 'Todavía no hay reseñas. ¡Sé el primero!'));
         return;
       }
-      // FALLA (XSS almacenado): el texto de la reseña viene de la base y se
-      // inyecta con innerHTML → se ejecuta en el navegador de cada visitante.
-      // Se sanitiza el texto de la reseña
-      cont.innerHTML = DOMPurify.sanitize(resp.data.comentarios.map(function (c) {
-        var estrellas = '';
-        var i;
-        for (i = 0; i < Number(c.calificacion || 0); i++) estrellas += '★';
-        return '' +
-          '<article class="review">' +
-          '  <div class="review-head">' +
-          '    <span class="review-author">' + raw(c.autor) + '</span>' +
-          '    <span class="review-stars">' + estrellas + '</span>' +
-          '  </div>' +
-          '  <p class="review-text">' + raw(c.texto) + '</p>' +
-          '</article>';
-      }).join(''));
+
+      var lista = document.createDocumentFragment();
+      comentarios.forEach(function (c) {
+        var autor = typeof c.autor === 'string' ? c.autor.slice(0, MAX_AUTOR_RESENA) : '';
+        var texto = typeof c.texto === 'string' ? c.texto.slice(0, MAX_TEXTO_RESENA) : '';
+        var calificacion = c.calificacion;
+        var estrellas = Number.isInteger(calificacion) && calificacion >= 1 && calificacion <= 5
+          ? '★'.repeat(calificacion)
+          : '';
+
+        var cabecera = elementoReseña('div', 'review-head');
+        cabecera.append(
+          elementoReseña('span', 'review-author', autor),
+          elementoReseña('span', 'review-stars', estrellas)
+        );
+        var tarjeta = elementoReseña('article', 'review');
+        tarjeta.append(cabecera, elementoReseña('p', 'review-text', texto));
+        lista.append(tarjeta);
+      });
+      cont.replaceChildren(lista);
     });
   }
 
