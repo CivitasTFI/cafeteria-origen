@@ -107,3 +107,20 @@ export function destruirSesion(req: Request): void {
   const id = leerCookies(req).sid;
   if (id) sesiones.delete(id);
 }
+
+/**
+ * Revoca todas las sesiones activas de un usuario.
+ * Devuelve los IDs eliminados para revocar sus tokens CSRF.
+ */
+export function revocarSesionesUsuario(idUsuario: number | string): string[] {
+  const idsRevocados: string[] = [];
+
+  for (const [idSesion, sesion] of sesiones.entries()) {
+    if (String(sesion.usuario.id) === String(idUsuario)) {
+      sesiones.delete(idSesion);
+      idsRevocados.push(idSesion);
+    }
+  }
+
+  return idsRevocados;
+}

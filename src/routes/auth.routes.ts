@@ -32,13 +32,32 @@ const limitarLogin = rateLimit({
  */
 router.post('/login', limitarLogin, async (req, res, next) => {
   try {
-    const { username, password } = req.body || {};
+    const contentType = req.get('content-type')
+      ?.split(';')[0]
+      .trim()
+      .toLowerCase();
 
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Falta usuario o contraseña.' });
+    if (contentType !== 'application/json') {
+      return res.status(415).json({
+        error: 'El inicio de sesión requiere Content-Type application/json.',
+      });
     }
 
-    // La verificación de credenciales es la consulta concatenada (SQLi).
+    const { username, password } = req.body || {};
+
+    if (
+      typeof username !== 'string' ||
+      typeof password !== 'string' ||
+      !username.trim() ||
+      !password
+    ) {
+      return res.status(400).json({
+        error: 'Falta usuario o contraseña.',
+      });
+    }
+
+
+    //* La verificación de credenciales utiliza autenticación segura.*
     const usuario = await usuarios.autenticar(username, password);
 
     if (!usuario) {

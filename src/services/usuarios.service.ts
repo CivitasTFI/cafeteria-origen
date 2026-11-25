@@ -1,6 +1,8 @@
 import * as db from '../db';
 import type { Usuario } from '../tipos';
 import * as bcrypt from 'bcryptjs';
+import { revocarSesionesUsuario } from '../middleware/sesion';
+import { revocarCsrfSesion } from '../middleware/csrf';
 /**
  * Servicio de usuarios.
  *
@@ -29,6 +31,15 @@ export type UsuarioPublico = Omit<Usuario, 'password'>;
 /** Genera un hash bcrypt para una contraseña en texto plano. */
 export async function hashearPassword(password: string): Promise<string> {
   return bcrypt.hash(password, COSTO_HASH);
+}
+
+/** Revoca las sesiones y los tokens CSRF asociados a un usuario. */
+function revocarAccesosUsuario(idUsuario: number | string): void {
+  const sesionesRevocadas = revocarSesionesUsuario(idUsuario);
+
+  for (const sid of sesionesRevocadas) {
+    revocarCsrfSesion(sid);
+  }
 }
 
 /** Busca un usuario por nombre de usuario exacto (query parametrizada). */
@@ -103,6 +114,13 @@ export async function actualizar(id: number | string, cambios: Partial<Usuario>)
 
   if (campos.length === 0) return null;
 
+  const rolAnterior = typeof cambios.rol === 'string'
+    ? await db.query<{ rol: string }>(
+        'SELECT rol FROM usuarios WHERE id = $1',
+        [id]
+      )
+    : null;
+
   valores.push(id);
 
   const { rows } = await db.query<UsuarioPublico>(
@@ -110,7 +128,20 @@ export async function actualizar(id: number | string, cambios: Partial<Usuario>)
     valores
   );
 
-  return rows[0] || null;
+  const usuarioActualizado = rows[0] || null;
+
+  if (usuarioActualizado) {
+    const cambioPassword = typeof cambios.password === 'string';
+    const cambioRol =
+      typeof cambios.rol === 'string' &&
+      rolAnterior?.rows[0]?.rol !== cambios.rol;
+
+    if (cambioPassword || cambioRol) {
+      revocarAccesosUsuario(id);
+    }
+  }
+
+  return usuarioActualizado;
 }
 
 export async function cambiarPassword(id: number, nuevaPassword: string): Promise<UsuarioPublico | null> {
@@ -124,5 +155,12 @@ export async function cambiarPassword(id: number, nuevaPassword: string): Promis
     [passwordHash, id]
   );
 
-  return rows[0] || null;
+    const usuarioActualizado = rows[0] || null;
+
+  if (usuarioActualizado) {
+    revocarAccesosUsuario(id);
+  }
+
+  return usuarioActualizado;
+
 }

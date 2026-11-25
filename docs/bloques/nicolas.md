@@ -139,9 +139,24 @@ Las advertencias sobre contraseñas de práctica triviales se registran como rie
 - [x] Hashing/comparación centralizados y respuestas sin credenciales derivadas.
 - [x] Seed y transición idempotentes preparados y aplicados sólo con autorización.
 - [x] Login parametrizado y errores uniformes.
-- [ ] Excepción JSON de login y controles de origen verificados localmente.
+- [x] Excepción JSON de login y controles de origen verificados localmente.
 - [x] Cookies, ID aleatorio y vencimiento absoluto implementados y comprobados.
 - [x] Logout y revocación por contraseña/rol integrados.
 - [x] Limitador verificado dentro de diez solicitudes sin penalizar éxitos.
 - [x] Baterías originales y casos legítimos autorizados registrados.
 - [ ] PR hacia `develop` revisado con evidencia y reflexión por falla.
+
+### Observación sobre el checker global — AUTH-02
+
+El control `AUTH-02` informa que no encuentra el hasheo de contraseñas en `src/inicializar.ts`.
+
+La implementación utiliza una función centralizada:
+
+- `src/inicializar.ts` invoca `hashearPassword(usuario.password)` antes de insertar cada usuario.
+- `src/services/usuarios.service.ts` implementa esa función mediante `bcrypt.hash(password, COSTO_HASH)`.
+
+Por lo tanto, el hasheo está implementado, aunque el análisis estático del checker no reconoce la delegación entre archivos.
+
+No se duplicó la implementación de bcrypt en el seed únicamente para satisfacer ese control.
+
+**Estado:** implementación realizada; falso negativo probable del checker, pendiente de revisión con el equipo responsable del verificador.

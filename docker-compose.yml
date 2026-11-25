@@ -60,7 +60,9 @@ services:
       DB_PASSWORD: "${DB_PASSWORD:?Configurar DB_PASSWORD en .env}"
       UPLOADS_DIR: /app/uploads
       # Puerto publicado en el host, sólo para los mensajes de arranque.
+      # Puerto publicado en el host, sólo para los mensajes de arranque.
       APP_PORT: "${APP_PORT:-8080}"
+      APP_ORIGIN: "${APP_ORIGIN:-http://localhost:${APP_PORT:-8080}}"
     ports:
       # Puerto en el host. Si en tu máquina el 8080 está ocupado, exportá
       # APP_PORT=8090 antes de `docker compose up` (o ponelo en un .env).
