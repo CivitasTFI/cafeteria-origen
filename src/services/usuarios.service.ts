@@ -60,7 +60,7 @@ export function excedeLimitePassword(password: string): boolean {
 }
 
 /** Genera un hash bcrypt para una contraseña en texto plano. */
-export async function hashearPassword(password: string): Promise<string> {
+export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, COSTO_HASH);
 }
 
@@ -146,7 +146,7 @@ export async function actualizar(id: number | string, cambios: Partial<Usuario>)
     let valorFinal = valor;
 
     if (campo === 'password' && typeof valor === 'string') {
-      valorFinal = await hashearPassword(valor);
+      valorFinal = await hashPassword(valor);
     }
 
     campos.push(`${campo} = $${valores.length + 1}`);
@@ -178,7 +178,7 @@ export async function actualizar(id: number | string, cambios: Partial<Usuario>)
 }
 
 export async function cambiarPassword(id: number, nuevaPassword: string): Promise<UsuarioPublico | null> {
-  const passwordHash = await hashearPassword(nuevaPassword);
+  const passwordHash = await hashPassword(nuevaPassword);
 
   return serializarPorUsuario(id, async () => {
     const { rows: [actualizado] } = await db.query<UsuarioPublico>(

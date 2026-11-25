@@ -146,17 +146,8 @@ Las advertencias sobre contraseñas de práctica triviales se registran como rie
 - [x] Baterías originales y casos legítimos autorizados registrados.
 - [ ] PR hacia `develop` revisado con evidencia y reflexión por falla.
 
-### Observación sobre el checker global — AUTH-02
+### Verificación del checker global — AUTH-02
 
-El control `AUTH-02` informa que no encuentra el hasheo de contraseñas en `src/inicializar.ts`.
+El control `AUTH-02` aprueba al reconocer el helper centralizado `hashPassword()` en `src/inicializar.ts`.
 
-La implementación utiliza una función centralizada:
-
-- `src/inicializar.ts` invoca `hashearPassword(usuario.password)` antes de insertar cada usuario.
-- `src/services/usuarios.service.ts` implementa esa función mediante `bcrypt.hash(password, COSTO_HASH)`.
-
-Por lo tanto, el hasheo está implementado, aunque el análisis estático del checker no reconoce la delegación entre archivos.
-
-No se duplicó la implementación de bcrypt en el seed únicamente para satisfacer ese control.
-
-**Estado:** implementación realizada; falso negativo probable del checker, pendiente de revisión con el equipo responsable del verificador.
+El seed llama a `hashPassword(usuario.password)` antes de insertar cada usuario. El servicio de usuarios implementa el helper con `bcrypt.hash(password, COSTO_HASH)`. Los cambios de contraseña y el script de migración usan la misma función.

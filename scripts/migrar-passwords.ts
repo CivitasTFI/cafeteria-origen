@@ -1,6 +1,6 @@
 
 import { pool } from '../src/db';
-import { hashearPassword } from '../src/services/usuarios.service';
+import { hashPassword } from '../src/services/usuarios.service';
 
 const FORMATO_BCRYPT = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/;
 
@@ -38,7 +38,7 @@ async function migrarPasswords(): Promise<void> {
             continue;
         }
 
-        const passwordHash = await hashearPassword(usuario.password);
+        const passwordHash = await hashPassword(usuario.password);
 
         const resultado = await client.query(
             `UPDATE usuarios

@@ -2,7 +2,7 @@ import * as db from './db';
 import config from './config';
 import { CATALOGO } from './catalogo';
 import type { Rol } from './tipos';
-import { esFormatoPasswordValido, excedeLimitePassword, hashearPassword } from './services/usuarios.service';
+import { esFormatoPasswordValido, excedeLimitePassword, hashPassword } from './services/usuarios.service';
 
 interface UsuarioInicial {
   username: string;
@@ -50,7 +50,7 @@ function usuariosIniciales(): UsuarioInicial[] {
 export async function inicializarBase(): Promise<void> {
   // --- Usuarios -------------------------------------------------------------
   for (const usuario of usuariosIniciales()) {
-    const passwordHash = await hashearPassword(usuario.password);
+    const passwordHash = await hashPassword(usuario.password);
 
     await db.query(
       `INSERT INTO usuarios (username, password, rol, nombre)

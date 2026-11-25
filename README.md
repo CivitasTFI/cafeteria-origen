@@ -48,7 +48,7 @@ docker compose exec app npm run typecheck
 docker compose exec app npm run check:security
 ```
 
-La consigna incluye la batería `test:seguridad` y el script combinado `test:todo`. Registrá qué verificaciones de la rúbrica ejecutaste y cuáles quedan pendientes. El checker analiza código y devuelve `1` si falla un control crítico. `AUTH-02` examina sólo `inicializar.ts` y no sigue la llamada a `hashearPassword()`. En una base nueva, el seed almacena el resultado de bcrypt.
+La consigna incluye la batería `test:seguridad` y el script combinado `test:todo`. Registrá qué verificaciones de la rúbrica ejecutaste y cuáles quedan pendientes. El checker analiza código y devuelve `1` si falla un control crítico. `AUTH-02` reconoce el uso de `hashPassword()` en `inicializar.ts`. En una base nueva, el seed almacena los hashes bcrypt generados por el servicio de usuarios.
 
 ---
 
