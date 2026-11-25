@@ -19,6 +19,14 @@ export interface NuevoPedido {
 /** Id tal como llega en la URL (texto) o ya convertido. */
 type Id = number | string;
 
+function validarIdPedido(id: Id): number {
+  const numero = typeof id === 'string' && /^[0-9]+$/.test(id) ? Number(id) : id;
+  if (typeof numero !== 'number' || !Number.isSafeInteger(numero) || numero < 1 || numero > 2_147_483_647) {
+    throw Object.assign(new Error('ID de pedido inválido'), { status: 400 });
+  }
+  return numero;
+}
+
 /**
  * Servicio de pedidos.
  *
@@ -128,9 +136,10 @@ export async function listar(mesa?: string): Promise<Pedido[]> {
 
 /** Devuelve un pedido con sus items. */
 export async function obtenerConItems(id: Id): Promise<PedidoConItems | null> {
+  const pedidoId = validarIdPedido(id);
   const { rows: pedidos } = await db.query<Pedido>(
     'SELECT * FROM pedidos WHERE id = $1',
-    [id]
+    [pedidoId]
   );
   const pedido = pedidos[0];
   if (!pedido) return null;
@@ -140,7 +149,7 @@ export async function obtenerConItems(id: Id): Promise<PedidoConItems | null> {
        FROM pedido_items pi
        JOIN productos pr ON pr.id = pi.producto_id
       WHERE pi.pedido_id = $1`,
-    [id]
+    [pedidoId]
   );
 
   return { ...pedido, items };
@@ -148,13 +157,14 @@ export async function obtenerConItems(id: Id): Promise<PedidoConItems | null> {
 
 /** Cambia el estado de un pedido. */
 export async function cambiarEstado(id: Id, estado: string): Promise<Pedido | null> {
+  const pedidoId = validarIdPedido(id);
   const estadosPermitidos = ['abierto', 'preparando', 'listo', 'entregado'];
   if (typeof estado !== 'string' || !estadosPermitidos.includes(estado)) {
     throw Object.assign(new Error('Estado inválido'), { status: 400 });
   }
   const { rows } = await db.query<Pedido>(
     'UPDATE pedidos SET estado = $1 WHERE id = $2 RETURNING *',
-    [estado, id]
+    [estado, pedidoId]
   );
   return rows[0] || null;
 }
