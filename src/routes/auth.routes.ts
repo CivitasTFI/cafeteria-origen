@@ -57,8 +57,11 @@ router.post('/login', limitarLogin, async (req, res, next) => {
     }
 
 
-    //* La verificación de credenciales utiliza autenticación segura.*
-    const usuario = await usuarios.autenticar(username, password);
+    const usuario = await usuarios.autenticar(username, password, (usuarioVigente) => {
+      const sidAnterior = leerCookies(req).sid;
+      if (sidAnterior) revocarCsrfSesion(sidAnterior);
+      crearSesion(req, res, usuarioVigente);
+    });
 
     if (!usuario) {
       return res.status(401).json({
@@ -66,24 +69,9 @@ router.post('/login', limitarLogin, async (req, res, next) => {
       });
     }
 
-    const sidAnterior = leerCookies(req).sid;
-    if (sidAnterior) revocarCsrfSesion(sidAnterior);
-
-    crearSesion(req, res, {
-      id: usuario.id,
-      username: usuario.username,
-      rol: usuario.rol,
-      nombre: usuario.nombre,
-    });
-
     res.json({
       mensaje: `¡Bienvenido, ${usuario.nombre}!`,
-      usuario: {
-        id: usuario.id,
-        username: usuario.username,
-        rol: usuario.rol,
-        nombre: usuario.nombre,
-      },
+      usuario,
     });
   } catch (err) {
     next(err);
