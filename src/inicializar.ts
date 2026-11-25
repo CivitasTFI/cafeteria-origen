@@ -1,7 +1,8 @@
 import * as db from './db';
+import config from './config';
 import { CATALOGO } from './catalogo';
 import type { Rol } from './tipos';
-import { hashearPassword } from './services/usuarios.service';
+import { esFormatoPasswordValido, excedeLimitePassword, hashearPassword } from './services/usuarios.service';
 
 interface UsuarioInicial {
   username: string;
@@ -10,51 +11,45 @@ interface UsuarioInicial {
   nombre: string;
 }
 
-/**
- * Carga los datos iniciales (usuarios y catálogo) si la base está vacía.
- *
- * FALLA — Almacenamiento inseguro de credenciales:
- * las contraseñas de los usuarios se guardan en TEXTO PLANO.
- * La corrección es hashear con bcrypt + salt por usuario
- * (bcryptjs ya está instalado como dependencia del proyecto).
- */
+function passwordInicial(variable: 'ADMIN_PASSWORD' | 'DEMO_PASSWORD'): string {
+  const password = process.env[variable];
+  if (!esFormatoPasswordValido(password) || [...password.trim()].length < 12 || excedeLimitePassword(password)) {
+    throw new Error(`Configurá ${variable} con al menos 12 caracteres y como máximo 72 bytes UTF-8.`);
+  }
+  return password;
+}
 
-export const USUARIOS_INICIALES: UsuarioInicial[] = [
-  {
+/** Prepara las cuentas del arranque sin cambiar credenciales ya almacenadas. */
+function usuariosIniciales(): UsuarioInicial[] {
+  const passwordAdmin = passwordInicial('ADMIN_PASSWORD');
+  const admin: UsuarioInicial = {
     username: 'admin',
-    password: 'admin',
+    password: passwordAdmin,
     rol: 'admin',
     nombre: 'Administración',
-  },
-  {
-    username: 'valentina',
-    password: 'origen2024',
-    rol: 'admin',
-    nombre: 'Valentina',
-  },
-  {
-    username: 'barista',
-    password: 'cafe123',
-    rol: 'barista',
-    nombre: 'Barista',
-  },
-  {
-    username: 'mozo',
-    password: 'mozo123',
-    rol: 'mozo',
-    nombre: 'Mozo de sala',
-  },
-  {
-    username: 'cliente',
-    password: 'cliente',
-    rol: 'cliente',
-    nombre: 'Cliente',
-  },
-];
+  };
+  if (process.env.DEMO_MODE !== 'true') return [admin];
+
+  if (config.nodeEnv !== 'development') {
+    throw new Error('DEMO_MODE sólo está disponible en desarrollo.');
+  }
+  const passwordDemo = passwordInicial('DEMO_PASSWORD');
+  if (passwordDemo === passwordAdmin) {
+    throw new Error('DEMO_PASSWORD debe ser diferente de ADMIN_PASSWORD.');
+  }
+
+  return [
+    admin,
+    { username: 'valentina', password: passwordAdmin, rol: 'admin', nombre: 'Valentina' },
+    { username: 'barista', password: passwordDemo, rol: 'barista', nombre: 'Barista' },
+    { username: 'mozo', password: passwordDemo, rol: 'mozo', nombre: 'Mozo de sala' },
+    { username: 'cliente', password: passwordDemo, rol: 'cliente', nombre: 'Cliente' },
+  ];
+}
 
 export async function inicializarBase(): Promise<void> {
   // --- Usuarios -------------------------------------------------------------
-  for (const usuario of USUARIOS_INICIALES) {
+  for (const usuario of usuariosIniciales()) {
     const passwordHash = await hashearPassword(usuario.password);
 
     await db.query(

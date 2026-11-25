@@ -28,6 +28,7 @@ import { revocarCsrfSesion } from '../middleware/csrf';
  */
 
 const COSTO_HASH = 10;
+const MAX_BYTES_CONTRASENA_BCRYPT = 72;
 // Permite ejecutar bcrypt también cuando no hay una cuenta, con el costo del servicio.
 const HASH_DE_REFERENCIA = bcrypt.hashSync(randomBytes(32).toString('hex'), COSTO_HASH);
 const operacionesPorUsuario = new Map<number, Promise<void>>();
@@ -48,6 +49,14 @@ async function serializarPorUsuario<T>(id: number | string, operar: () => Promis
     liberar();
     if (operacionesPorUsuario.get(clave) === turno) operacionesPorUsuario.delete(clave);
   }
+}
+
+export function esFormatoPasswordValido(password: unknown): password is string {
+  return typeof password === 'string' && password.trim().length > 0 && !password.includes('\0');
+}
+
+export function excedeLimitePassword(password: string): boolean {
+  return Buffer.byteLength(password, 'utf8') > MAX_BYTES_CONTRASENA_BCRYPT;
 }
 
 /** Genera un hash bcrypt para una contraseña en texto plano. */
