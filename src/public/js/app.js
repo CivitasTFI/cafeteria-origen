@@ -14,16 +14,24 @@
     carrito: cargarCarrito(),
   };
 
-  var csrfToken = null;
+  var contextoCsrf = null;
+  var consultaCsrf = null;
 
   function obtenerCsrf() {
-    if (csrfToken) return Promise.resolve(csrfToken);
-    return fetch(API + '/csrf-token', { credentials: 'same-origin' })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        csrfToken = d.token;
-        return csrfToken;
-      });
+    if (contextoCsrf) return Promise.resolve(contextoCsrf);
+    if (!consultaCsrf) {
+      consultaCsrf = api('/csrf-token', { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (resp) {
+          var token = resp.data?.token;
+          if (!resp.ok || typeof token !== 'string' || !token.trim()) {
+            throw new Error('No se recibió un token CSRF válido.');
+          }
+          contextoCsrf = { token: token };
+          return contextoCsrf;
+        })
+        .finally(function () { consultaCsrf = null; });
+    }
+    return consultaCsrf;
   }
 
   /* ---------------------------------------------------------------- utils */
@@ -49,9 +57,24 @@
     });
   }
 
-  function postJSON(url, cuerpo) {
-    return obtenerCsrf().then(function (token) {
-      return api(url, {
+  var MENSAJE_ENVIO_INCIERTO = 'No pudimos confirmar el envío. Verificá si quedó registrado antes de volver a intentarlo.';
+
+  function falloEnvio(mensaje) {
+    return { ok: false, mensaje: mensaje };
+  }
+
+  async function postJSON(url, cuerpo) {
+    var contexto;
+    try {
+      contexto = await obtenerCsrf();
+    } catch {
+      return falloEnvio('No pudimos obtener la verificación de seguridad. Volvé a intentar.');
+    }
+
+    var resp;
+    try {
+      var token = contexto.token;
+      resp = await api(url, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -60,7 +83,25 @@
         },
         body: JSON.stringify(Object.assign({}, cuerpo || {}, { _csrf: token })),
       });
-    });
+    } catch {
+      return falloEnvio(MENSAJE_ENVIO_INCIERTO);
+    }
+
+    if (resp.status === 403 && resp.data?.error === 'Token CSRF inválido o faltante') {
+      // Un rechazo demorado sólo puede invalidar el contexto que usó esa escritura.
+      if (contextoCsrf === contexto) contextoCsrf = null;
+      try {
+        await obtenerCsrf();
+        return falloEnvio('La verificación de seguridad se actualizó. Volvé a enviar el formulario.');
+      } catch {
+        return falloEnvio('No pudimos actualizar la verificación de seguridad. Volvé a intentar.');
+      }
+    }
+
+    if (resp.status >= 500 || (resp.ok && (resp.status !== 201 || !Number.isInteger(resp.data?.id)))) {
+      return falloEnvio(MENSAJE_ENVIO_INCIERTO);
+    }
+    return resp;
   }
 
   function guardarCarrito() {
@@ -237,6 +278,11 @@
   /* ---------------------------------------------------------------- pedidos */
   function enviarPedido(evento) {
     evento.preventDefault();
+    var formulario = evento.currentTarget;
+    var boton = formulario.querySelector('button[type="submit"]');
+    if (boton.disabled) return;
+    boton.disabled = true;
+
     var feedback = $('#pedido-feedback');
     feedback.className = 'form-feedback';
     feedback.textContent = 'Enviando…';
@@ -249,10 +295,8 @@
       }),
     }).then(function (resp) {
       if (!resp.ok) {
-        // FALLA (XSS reflejado): el mensaje del servidor se pinta con innerHTML.
-        // Se usa DOMPurify para sanitizar el mensaje
         feedback.className = 'form-feedback is-error';
-        feedback.textContent = DOMPurify.sanitize('No pudimos enviar el pedido: ' + (resp.data.error || 'error desconocido'));
+        feedback.textContent = resp.mensaje || ('No pudimos enviar el pedido: ' + (resp.data?.error || 'error desconocido'));
         return;
       }
       feedback.className = 'form-feedback is-ok';
@@ -261,10 +305,12 @@
       estado.carrito = [];
       guardarCarrito();
       renderCarrito();
-      $('#form-pedido').reset();
+      formulario.reset();
     }).catch(function () {
       feedback.className = 'form-feedback is-error';
-      feedback.textContent = 'Error de conexión con el servidor.';
+      feedback.textContent = MENSAJE_ENVIO_INCIERTO;
+    }).finally(function () {
+      boton.disabled = false;
     });
   }
 
@@ -312,6 +358,11 @@
 
   function enviarReseña(evento) {
     evento.preventDefault();
+    var formulario = evento.currentTarget;
+    var boton = formulario.querySelector('button[type="submit"]');
+    if (boton.disabled) return;
+    boton.disabled = true;
+
     var feedback = $('#resena-feedback');
     feedback.className = 'form-feedback';
     feedback.textContent = 'Publicando…';
@@ -323,14 +374,20 @@
     }).then(function (resp) {
       if (!resp.ok) {
         feedback.className = 'form-feedback is-error';
-        // Se mantiene el innerHTML por si el error contiene HTML Pero se sanitiza el mensaje
-        feedback.innerHTML = DOMPurify.sanitize('No se pudo publicar: ' + (resp.data.error || 'error desconocido'));
+        feedback.textContent = resp.mensaje || ('No se pudo publicar: ' + (resp.data?.error || 'error desconocido'));
         return;
       }
       feedback.className = 'form-feedback is-ok';
       feedback.textContent = '¡Gracias por tu reseña!';
-      $('#form-resena').reset();
-      cargarReseñas();
+      formulario.reset();
+      return cargarReseñas().catch(function () {
+        feedback.textContent = 'La reseña se guardó. No pudimos actualizar la lista.';
+      });
+    }).catch(function () {
+      feedback.className = 'form-feedback is-error';
+      feedback.textContent = MENSAJE_ENVIO_INCIERTO;
+    }).finally(function () {
+      boton.disabled = false;
     });
   }
 
