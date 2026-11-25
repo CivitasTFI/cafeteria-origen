@@ -24,19 +24,22 @@ function esTextoValido(valor: unknown): valor is string {
 
 router.use(requiereSesion);
 
-/**
- * POST /api/admin/cambiar-contrasena — cambio personal para toda sesión válida.
- *
- * FALLAS: sin token anti-CSRF, sin límite de intentos, y la contraseña nueva
- * se guarda en texto plano.
- */
+const MAX_BYTES_CONTRASENA_BCRYPT = 72;
+
+/** POST /api/admin/cambiar-contrasena — cambio personal para toda sesión válida. */
 router.post('/cambiar-contrasena', async (req, res, next) => {
   try {
-    const { nueva } = req.body || {};
+    const { nueva }: { nueva?: unknown } = req.body || {};
     if (!nueva) {
       return res.status(400).json({ error: 'Falta la contraseña nueva.' });
     }
-    // FALLA: no se valida la longitud ni la complejidad de la contraseña.
+    if (!esTextoValido(nueva) || nueva.trim().length === 0) {
+      return res.status(400).json({ error: 'Contraseña nueva inválida.' });
+    }
+    if (Buffer.byteLength(nueva, 'utf8') > MAX_BYTES_CONTRASENA_BCRYPT) {
+      return res.status(400).json({ error: 'La contraseña nueva no puede superar 72 bytes en UTF-8.' });
+    }
+
     // (`req.usuario!`: requiereSesion ya garantizó que hay un usuario.)
     const usuario = await usuarios.cambiarPassword(req.usuario!.id, nueva);
     res.json({ mensaje: 'Contraseña actualizada.', usuario });
