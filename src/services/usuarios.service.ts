@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import * as db from '../db';
 import type { Usuario, UsuarioSesion } from '../tipos';
 import * as bcrypt from 'bcryptjs';
@@ -27,6 +28,8 @@ import { revocarCsrfSesion } from '../middleware/csrf';
  */
 
 const COSTO_HASH = 10;
+// Permite ejecutar bcrypt también cuando no hay una cuenta, con el costo del servicio.
+const HASH_DE_REFERENCIA = bcrypt.hashSync(randomBytes(32).toString('hex'), COSTO_HASH);
 const operacionesPorUsuario = new Map<number, Promise<void>>();
 export type UsuarioPublico = Omit<Usuario, 'password'>;
 
@@ -80,14 +83,10 @@ export async function autenticar(
   emitirSesion: (usuario: UsuarioSesion) => void
 ): Promise<UsuarioSesion | null> {
   const usuario = await buscarPorUsername(username);
+  const hash = usuario ? usuario.password : HASH_DE_REFERENCIA;
+  const passwordValida = await bcrypt.compare(password, hash);
 
-  if (!usuario) {
-    return null;
-  }
-
-  const passwordValida = await bcrypt.compare(password, usuario.password);
-
-  if (!passwordValida) {
+  if (!usuario || !passwordValida) {
     return null;
   }
 
