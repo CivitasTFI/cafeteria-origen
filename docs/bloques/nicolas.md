@@ -134,10 +134,10 @@ Las advertencias sobre contraseñas de práctica triviales se registran como rie
 
 ## 11. Checklist de avance
 
-- [ ] Línea base y estado persistente inspeccionados con autorización.
+- [x] Línea base y estado persistente inspeccionados con autorización.
 - [ ] Contratos con Matías/Homero respetados y ediciones compartidas coordinadas.
-- [ ] Hashing/comparación centralizados y respuestas sin credenciales derivadas.
-- [ ] Seed y transición idempotentes preparados y aplicados sólo con autorización.
+- [x] Hashing/comparación centralizados y respuestas sin credenciales derivadas.
+- [x] Seed y transición idempotentes preparados y aplicados sólo con autorización.
 - [ ] Login parametrizado y errores uniformes.
 - [ ] Excepción JSON de login y controles de origen verificados localmente.
 - [ ] Cookies, ID aleatorio y vencimiento absoluto implementados y comprobados.
