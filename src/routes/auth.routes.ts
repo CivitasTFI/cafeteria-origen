@@ -2,9 +2,23 @@ import express from 'express';
 import * as usuarios from '../services/usuarios.service';
 import { revocarCsrfSesion } from '../middleware/csrf';
 import { crearSesion, destruirSesion, leerCookies, obtenerSesion } from '../middleware/sesion';
+import { rateLimit } from 'express-rate-limit';
 
 const router = express.Router();
 
+//Limitador
+const limitarLogin = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  limit: 9,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  handler: (_req, res) => {
+    res.status(429).json({
+      error: 'Demasiados intentos de inicio de sesión. Intentá nuevamente más tarde.',
+    });
+  },
+});
 /**
  * Inicio de sesión.
  *
@@ -16,7 +30,7 @@ const router = express.Router();
  *  - Sin rate limiting ni bloqueo: fuerza bruta ilimitada.
  *  - El identificador de sesión no se regenera (fijación de sesión).
  */
-router.post('/login', async (req, res, next) => {
+router.post('/login', limitarLogin, async (req, res, next) => {
   try {
     const { username, password } = req.body || {};
 
@@ -28,17 +42,9 @@ router.post('/login', async (req, res, next) => {
     const usuario = await usuarios.autenticar(username, password);
 
     if (!usuario) {
-      // FALLA — Enumeración de usuarios: el mensaje distingue entre
-      // "no existe" y "contraseña incorrecta", lo que permite a un atacante
-      // averiguar qué cuentas hay en el sistema.
-      const existe = await usuarios.buscarPorUsername(username);
-      if (existe) {
-        return res.status(401).json({ error: 'La contraseña es incorrecta.' });
-      }
-      return res
-        .status(401)
-        // Cambio para pasar el test de XSS, CORREGIR LA ENUMERACIÓN DE USUARIOS
-        .json({ error: `El usuario no existe en el sistema.` });
+      return res.status(401).json({
+        error: 'Usuario o contraseña incorrectos.'
+      });
     }
 
     const sidAnterior = leerCookies(req).sid;
