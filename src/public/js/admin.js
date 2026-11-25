@@ -7,6 +7,24 @@
   var API = '/api';
   var usuario = null;
   var productosCache = {};
+  var csrfToken = null;
+
+  function obtenerCsrf() {
+    if (csrfToken) return Promise.resolve(csrfToken);
+    return fetch(API + '/csrf-token', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        csrfToken = d.token;
+        return csrfToken;
+      });
+  }
+
+  function headersConCsrf(token) {
+    return {
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': token,
+    };
+  }
 
   function $(sel) { return document.querySelector(sel); }
   function $$(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
@@ -35,26 +53,54 @@
   }
 
   function postJSON(url, cuerpo) {
-    return api(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cuerpo || {}),
+    var body = cuerpo || {};
+    if (url === '/auth/login') {
+      return api(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    }
+    return obtenerCsrf().then(function (token) {
+      return api(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: headersConCsrf(token),
+        body: JSON.stringify(Object.assign({}, body, { _csrf: token })),
+      });
     });
   }
 
   function putJSON(url, cuerpo) {
-    return api(url, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cuerpo || {}),
+    return obtenerCsrf().then(function (token) {
+      return api(url, {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: headersConCsrf(token),
+        body: JSON.stringify(Object.assign({}, cuerpo || {}, { _csrf: token })),
+      });
     });
   }
 
   function patchJSON(url, cuerpo) {
-    return api(url, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cuerpo || {}),
+    return obtenerCsrf().then(function (token) {
+      return api(url, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: headersConCsrf(token),
+        body: JSON.stringify(Object.assign({}, cuerpo || {}, { _csrf: token })),
+      });
+    });
+  }
+
+  function deleteConCsrf(url) {
+    return obtenerCsrf().then(function (token) {
+      var sep = url.indexOf('?') >= 0 ? '&' : '?';
+      return api(url + sep + '_csrf=' + encodeURIComponent(token), {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        headers: { 'X-CSRF-Token': token },
+      });
     });
   }
 
@@ -79,6 +125,7 @@
         feedback(caja, 'No pudimos iniciar sesión: ' + (resp.data.error || 'error desconocido'), false);
         return;
       }
+      csrfToken = null;
       usuario = resp.data.usuario;
       mostrarPanel();
     });
@@ -86,6 +133,7 @@
 
   function cerrarSesion() {
     postJSON('/auth/logout', {}).then(function () {
+      csrfToken = null;
       usuario = null;
       $('#vista-login').hidden = false;
       $('#vista-panel').hidden = true;
@@ -248,7 +296,7 @@
     var id = btn.getAttribute('data-borrar');
     if (!confirm('¿Borrar el producto #' + id + '?')) return;
 
-    api('/admin/productos/' + id, { method: 'DELETE' }).then(function (resp) {
+    deleteConCsrf('/admin/productos/' + id).then(function (resp) {
       if (!resp.ok) alert('No se pudo borrar: ' + (resp.data.error || 'error'));
       cargarProductos();
     });
